@@ -12,8 +12,22 @@ class App:
     def __init__(self, master):
 
 	# Some starting constants
-
-	# Broadcom GPIO channel numbering is used by default
+	self.servoIncrement = 100
+        self.wheelDiameter = 5.4 # cm
+	self.ticksPer360 = 300 # Number of wheel pulses to turn 360 degrees
+	defaultDriveSpeed = 30 # %
+	defaultRotationRate = 60 # %
+	defaultDriveDistance = 10 # cm
+	defaultRotationAmount = 90 # degrees
+	self.subcycleFrequency = 100 # Hz - I cannot seem to get this to work much above 125 Hz
+	self.subcycleWidthMicroseconds = 1000000 / self.subcycleFrequency
+	self.defaultPowerPercentage = 14  # 14% seems about as low as I can take it without the motor stalling at 100 Hz
+	self.motorStateStopped = 1
+	self.motorStateForward = 2
+	self.motorStateReverse = 3
+	self.motorStateSpinningLeft = 4
+	self.motorStateSpinningRight = 5
+	# GPIO channels Broadcom numbering is used by default
 	self.leftWheelSensorGPIOChannel = 22
 	self.rightWheelSensorGPIOChannel = 23
 	self.leftMotorForwardGPIOChannel = 10
@@ -24,19 +38,8 @@ class App:
 	self.rightObstacleSensorGPIOChannel = 17
 	self.leftLineSensorGPIOChannel = 18
 	self.rightLineSensorGPIOChannel = 27
-	self.panServo = 25
-	self.tiltServo = 24
-
-	self.wheelDiameter = 5.4 # cm
-	self.ticksPer360 = 300 # Number of wheel pulses to turn 360 degrees
-	self.leftWheelCount = -1
-	self.rightWheelCount = -1
-	defaultDriveSpeed = 30 # %
-	defaultRotationRate = 60 # %
-	defaultDriveDistance = 10 # cm
-	defaultRotationAmount = 90 # degrees
-	self.dataLock = thread.allocate_lock()
-
+	self.panServoGPIOChannel = 25
+	self.tiltServoGPIOChannel = 24
 	# DMA channels (engines) used by this module
 	# ==========================================
 	# From 3.12 onwards rasbian kernels have the broadcom dma module built in. 
@@ -46,10 +49,10 @@ class App:
 	# This is a bit mask so a 0 bit means that the channel is reserved.
 	# You need to add the channels used by this module to this mask.
 	# To do this edit /boot/cmdline.txt and add dma.dmachans=0x7f05 to the end and reboot.
-	# If a dma.dmachans parameter is already present you will have to work out what channels are free
+	# If a non default dma.dmachans parameter is already present you will have to work out what channels are free
 	# and modify the allocations below to match before editing the value there.
 	# You can check if this has worked by looking at /sys/module/dma/parameters/dmachans again.
-	# Adding our channles to this list stop the kernel from grabbing them from underneath us!
+	# Adding our channels to this list stops the kernel from grabbing them from underneath us!
 	# If you want to use different channels remember that dma channel 0 is a special channel
 	# and should not be used, it is not in the reserved list because various kernel subsystems need
 	# to use it from time to time and they reserve it on a ad-hoc basis. Channel 15 should never be used
@@ -57,20 +60,21 @@ class App:
 	self.motorDmaChannel = 4
 	self.servoDmaChannel = 5
 
-	self.subcycleFrequency = 100 # Hz - I cannot seem to get this to work much above 125 Hz
-	self.subcycleWidthMicroseconds = 1000000 / self.subcycleFrequency
-	self.defaultPowerPercentage = 14  # 14% seems about as low as I can take it without the motor stalling at 100 Hz
-	self.motorStateStopped = 1
-	self.motorStateForward = 2
-	self.motorStateReverse = 3
-	self.motorStateSpinningLeft = 4
-	self.motorStateSpinningRight = 5
+	# Various state variables
+	self.leftWheelCount = -1
+	self.rightWheelCount = -1
+	self.leftObstacleSensorState = -1
+	self.rightObstacleSensorState = -1
+	self.leftLineSensorState = -1
+	self.rightLineSensorState = -1
 	self.currentMotorState = self.motorStateStopped
-
-	self.servoIncrement = 100
 	self.currentPan = 1500
 	self.currentTilt = 1500
 
+        # Lock for global data
+	self.dataLock = thread.allocate_lock()
+
+        # Check if the dma channels are correctly reserved
 	try:
 		dmamanager = open('/sys/module/dma/parameters/dmachans', mode='r')
 		dmachans = int(dmamanager.readline())
@@ -81,6 +85,7 @@ class App:
 		print 'Cannot read dma manager please see code for help on what to do'
 		exit(-1)
 
+        # set up the GUI
         frame = Frame(master)
         frame.pack()
 
@@ -144,10 +149,8 @@ class App:
 	rotationAmount.grid(row=4, column=1)
 	label = Label(speedframe, text="degrees")
 	label.grid(row=4, column=2)
-	
 	pantilt = LabelFrame(master, text="Pan Tilt Head", padx=5, pady=5)
 	pantilt.pack(padx=10, pady=10)
-
 	self.ptUp = Button(pantilt, text="Tilt Up")
         self.ptUp.grid(row=0, column=1)
 	self.ptUp.bind("<Button-1>", self.ptUpCallback)
@@ -163,16 +166,12 @@ class App:
         self.ptDown = Button(pantilt, text="Tilt Down")
         self.ptDown.grid(row=2, column=1)
 	self.ptDown.bind("<Button-1>", self.ptDownCallback)
-
 	sonar = LabelFrame(master, text="Sonar", padx=5, pady=5)
 	sonar.pack(padx=10, pady=10)
-
 	label = Label(sonar, text="Range ")
 	label.grid(row=0, column=0)
-
 	obstacle = LabelFrame(master, text="Obstacle sensors", padx=5, pady=5)
 	obstacle.pack(padx=10, pady=10)
-
 	label = Label(obstacle, text="Left ")
 	label.grid(row=0, column=0)
 	label = Label(obstacle, text="false")
@@ -182,11 +181,9 @@ class App:
 	label = Label(obstacle, text="false")
 	label.grid(row=0, column=3)
 
-	# Initialise the the initio
+	# Initialise the motor control
 	RPIO.wait_for_interrupts(threaded=True)
-
 	PWM.setup(delay_hw=PWM.DELAY_VIA_PCM) # RPIO PWM does not work on multiple dma channels when used with the DELAY_VIA_PWM timing source
-
 	RPIO.setup(self.leftMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
 	RPIO.setup(self.leftMotorReverseGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
 	RPIO.setup(self.rightMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
@@ -198,16 +195,28 @@ class App:
 	self.pulseIncrementsPercent = self.subcycleWidthMicroseconds / currentPulseIncrementMicroseconds / 100
 	print "pulseIncrementPercent ", self.pulseIncrementsPercent
 
+	# Initialise the servos
+	self.Servos = PWM.Servo(self.servoDmaChannel, 20000)
+	self.Servos.set_servo(self.panServo, self.currentPan) # Centre
+	self.Servos.set_servo(self.tiltServo, self.currentTilt) # Centre
+
 	# Set up the wheel sensors
 	RPIO.setup(self.leftWheelSensorGPIOChannel, RPIO.IN)
 	RPIO.add_interrupt_callback(self.leftWheelSensorGPIOChannel, self.leftWheelSensorCallback)
 	RPIO.setup(self.rightWheelSensorGPIOChannel, RPIO.IN)
 	RPIO.add_interrupt_callback(self.rightWheelSensorGPIOChannel, self.rightWheelSensorCallback)
 
-	# Initialise the servos
-	self.Servos = PWM.Servo(self.servoDmaChannel, 20000)
-	self.Servos.set_servo(self.panServo, self.currentPan) # Centre
-	self.Servos.set_servo(self.tiltServo, self.currentTilt) # Centre
+	# Set up obstacle sensors
+	RPIO.setup(self.leftObstacleSensorGPIOChannel, RPIO.IN)
+	RPIO.add_interrupt_callback(self.leftObstacleSensorGPIOChannel, self.leftObstacleSensorCallback)
+	RPIO.setup(self.rightObstacleSensorGPIOChannel, RPIO.IN)
+	RPIO.add_interrupt_callback(self.rightObstacleSensorGPIOChannel, self.rightObstacleSensorCallback)
+
+	# Set up the line sensors
+	RPIO.setup(self.leftLineSensorGPIOChannel, RPIO.IN)
+	RPIO.add_interrupt_callback(self.leftLineSensorGPIOChannel, self.leftLineSensorCallback)
+	RPIO.setup(self.rightLineSensorGPIOChannel, RPIO.IN)
+	RPIO.add_interrupt_callback(self.rightLineSensorGPIOChannel, self.rightLineSensorCallback)
 
 
     def forwardCallback(self, event):
@@ -245,18 +254,6 @@ class App:
 
     def stopCallback(self, event):
 	self.stopMotors()
-
-    def leftWheelSensorCallback(self, channel):
-	if self.leftWheelCount > 0:
-	    self.dataLock.acquire()
-	    self.leftWheelCount = self.leftWheelCount - 1
-	    if self.leftWheelCount == 0:
-	    	self.stopMotors()
-		self.leftWheelCount = -1
-	    self.dataLock.release()
-
-    def rightWheelSensorCallback(self, channel):
-	print "Rising edge on right wheel"
 
     def stopMotors(self):
 	self.dataLock.acquire()
@@ -352,8 +349,65 @@ class App:
 	self.currentTilt = 1500
 	self.Servos.set_servo(self.panServo, self.currentPan)
 	self.Servos.set_servo(self.tiltServo, self.currentTilt)
-    
 
+    def leftWheelSensorCallback(self, gpio_id, value):
+	if self.leftWheelCount > 0:
+	    self.dataLock.acquire()
+	    self.leftWheelCount = self.leftWheelCount - 1
+	    if self.leftWheelCount == 0:
+	    	self.stopMotors()
+		self.leftWheelCount = -1
+		self.rightWheelCount = -1
+	    self.dataLock.release()
+
+    def rightWheelSensorCallback(self, gpio_id, value):
+	if self.rightWheelCount > 0:
+	    self.dataLock.acquire()
+	    self.rightWheelCount = self.rightWheelCount - 1
+	    if self.rightWheelCount == 0:
+	    	self.stopMotors()
+		self.leftWheelCount = -1
+		self.rightWheelCount = -1
+	    self.dataLock.release()
+
+    def obstacleSensorStateChange(oldLeft, newLeft, oldRight, newRight):
+	print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight)
+
+    def leftObstacleSensorCallback(self, gpio_id, value):
+	self.dataLock.acquire()
+	oldvalue = self.leftObstacleSensorState
+	if oldvalue != value:
+             self.leftObstacleSensorState = value
+             self.obstacleSensorStateChange(oldvalue, value, self.rightObstacleSensorState, self.rightObstacleSensorState)
+        self.dataLock.release()
+	 
+    def rightObstacleSensorCallback(self, gpio_id, value):
+	self.dataLock.acquire()
+	oldvalue = self.rightObstacleSensorState
+	if oldvalue != value:
+             self.rightObstacleSensorState = value
+             self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, value)
+        self.dataLock.release()
+	 
+    def lineSensorStateChange(oldLeft, newLeft, oldRight, newRight):
+	print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight)
+
+    def leftLineSensorCallback(self, gpio_id, value):
+	self.dataLock.acquire()
+	oldvalue = self.leftLineSensorState
+	if oldvalue != value:
+             self.leftLineSensorState = value
+             self.lineSensorStateChange(oldvalue, value, self.rightLineSensorState, self.rightLineSensorState)
+        self.dataLock.release()
+	 
+    def rightLineSensorCallback(self, gpio_id, value):
+	self.dataLock.acquire()
+	oldvalue = self.rightLineSensorState
+	if oldvalue != value:
+             self.rightLineSensorState = value
+             self.lineSensorStateChange(self.leftLineSensorState, self.leftLineSensorState, oldvalue, value)
+        self.dataLock.release()
+	 
     def __del__(self):
 	self.stopMotors()
 	PWM.cleanup()
