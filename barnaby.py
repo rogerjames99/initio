@@ -197,8 +197,8 @@ class App:
 
 	# Initialise the servos
 	self.Servos = PWM.Servo(self.servoDmaChannel, 20000)
-	self.Servos.set_servo(self.panServo, self.currentPan) # Centre
-	self.Servos.set_servo(self.tiltServo, self.currentTilt) # Centre
+	self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan) # Centre
+	self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt) # Centre
 
 	# Set up the wheel sensors
 	RPIO.setup(self.leftWheelSensorGPIOChannel, RPIO.IN)
@@ -324,31 +324,31 @@ class App:
 	self.currentTilt += 100
         if self.currentTilt > 2500:
             self.currentTilt = 2500
-	self.Servos.set_servo(self.tiltServo, self.currentTilt)
+	self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
     
     def ptUpCallback(self, event):
 	self.currentTilt -= 100
         if self.currentTilt < 500:
             self.currentTilt = 500
-	self.Servos.set_servo(self.tiltServo, self.currentTilt)
+	self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
     
     def ptLeftCallback(self, event):
 	self.currentPan += 100
         if self.currentPan > 2500:
             self.currentPan = 2500
-	self.Servos.set_servo(self.panServo, self.currentPan)
+	self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
     
     def ptRightCallback(self, event):
 	self.currentPan -= 100
         if self.currentPan < 500:
             self.currentPan = 500
-	self.Servos.set_servo(self.panServo, self.currentPan)
+	self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
     
     def ptCentreCallback(self, event):
 	self.currentPan = 1500
 	self.currentTilt = 1500
-	self.Servos.set_servo(self.panServo, self.currentPan)
-	self.Servos.set_servo(self.tiltServo, self.currentTilt)
+	self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+	self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
 
     def leftWheelSensorCallback(self, gpio_id, value):
 	if self.leftWheelCount > 0:
@@ -370,10 +370,11 @@ class App:
 		self.rightWheelCount = -1
 	    self.dataLock.release()
 
-    def obstacleSensorStateChange(oldLeft, newLeft, oldRight, newRight):
-	print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight)
+    def obstacleSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
+	print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftObstacleSensorCallback(self, gpio_id, value):
+	print 'Left obstacle sensor interrupt'
 	self.dataLock.acquire()
 	oldvalue = self.leftObstacleSensorState
 	if oldvalue != value:
@@ -382,6 +383,7 @@ class App:
         self.dataLock.release()
 	 
     def rightObstacleSensorCallback(self, gpio_id, value):
+	print 'Right obstacle sensor interrupt'
 	self.dataLock.acquire()
 	oldvalue = self.rightObstacleSensorState
 	if oldvalue != value:
@@ -389,10 +391,11 @@ class App:
              self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, value)
         self.dataLock.release()
 	 
-    def lineSensorStateChange(oldLeft, newLeft, oldRight, newRight):
-	print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight)
+    def lineSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
+	print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftLineSensorCallback(self, gpio_id, value):
+	print 'Left line sensor interrupt'
 	self.dataLock.acquire()
 	oldvalue = self.leftLineSensorState
 	if oldvalue != value:
@@ -401,6 +404,7 @@ class App:
         self.dataLock.release()
 	 
     def rightLineSensorCallback(self, gpio_id, value):
+	print 'Right line sensor interrupt'
 	self.dataLock.acquire()
 	oldvalue = self.rightLineSensorState
 	if oldvalue != value:
