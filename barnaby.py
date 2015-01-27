@@ -174,11 +174,15 @@ class App:
 	obstacle.pack(padx=10, pady=10)
 	label = Label(obstacle, text="Left ")
 	label.grid(row=0, column=0)
-	label = Label(obstacle, text="false")
+	self.leftObstacleState = StringVar()
+        self.leftObstacleState.set('unknown')
+	label = Label(obstacle, textvariable=self.leftObstacleState)
 	label.grid(row=0, column=1)
 	label = Label(obstacle, text="Right ")
 	label.grid(row=0, column=2)
-	label = Label(obstacle, text="false")
+	self.rightObstacleState = StringVar()
+        self.rightObstacleState.set('unknown')
+	label = Label(obstacle, textvariable=self.rightObstacleState)
 	label.grid(row=0, column=3)
 
 	# Initialise the motor control
@@ -380,6 +384,10 @@ class App:
 	if oldvalue != value:
              self.leftObstacleSensorState = value
              self.obstacleSensorStateChange(oldvalue, value, self.rightObstacleSensorState, self.rightObstacleSensorState)
+             if value != 0:
+                 self.leftObstacleState.set('True')
+             else:
+                 self.leftObstacleState.set('False')
         self.dataLock.release()
 	 
     def rightObstacleSensorCallback(self, gpio_id, value):
@@ -389,6 +397,10 @@ class App:
 	if oldvalue != value:
              self.rightObstacleSensorState = value
              self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, value)
+             if value != 0:
+                 self.rightObstacleState.set('True')
+             else:
+                 self.rightObstacleState.set('False')
         self.dataLock.release()
 	 
     def lineSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
