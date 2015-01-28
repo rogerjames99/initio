@@ -63,10 +63,10 @@ class App:
 	# Various state variables
 	self.leftWheelCount = -1
 	self.rightWheelCount = -1
-	self.leftObstacleSensorState = -1
-	self.rightObstacleSensorState = -1
-	self.leftLineSensorState = -1
-	self.rightLineSensorState = -1
+	self.leftObstacleSensorState = RPIO.LOW
+	self.rightObstacleSensorState = RPIO.LOW
+	self.leftLineSensorState = RPIO.LOW
+	self.rightLineSensorState = RPIO.LOW
 	self.currentMotorState = self.motorStateStopped
 	self.currentPan = 1500
 	self.currentTilt = 1500
@@ -175,14 +175,24 @@ class App:
 	label = Label(obstacle, text="Left ")
 	label.grid(row=0, column=0)
 	self.leftObstacleState = StringVar()
-        self.leftObstacleState.set('unknown')
 	label = Label(obstacle, textvariable=self.leftObstacleState)
 	label.grid(row=0, column=1)
 	label = Label(obstacle, text="Right ")
 	label.grid(row=0, column=2)
 	self.rightObstacleState = StringVar()
-        self.rightObstacleState.set('unknown')
 	label = Label(obstacle, textvariable=self.rightObstacleState)
+	label.grid(row=0, column=3)
+	line = LabelFrame(master, text="Line sensors", padx=5, pady=5)
+	line.pack(padx=10, pady=10)
+	label = Label(line, text="Left ")
+	label.grid(row=0, column=0)
+	self.leftLineState = StringVar()
+	label = Label(line, textvariable=self.leftLineState)
+	label.grid(row=0, column=1)
+	label = Label(line, text="Right ")
+	label.grid(row=0, column=2)
+	self.rightLineState = StringVar()
+	label = Label(line, textvariable=self.rightLineState)
 	label.grid(row=0, column=3)
 
 	# Initialise the motor control
@@ -215,12 +225,38 @@ class App:
 	RPIO.add_interrupt_callback(self.leftObstacleSensorGPIOChannel, self.leftObstacleSensorCallback)
 	RPIO.setup(self.rightObstacleSensorGPIOChannel, RPIO.IN)
 	RPIO.add_interrupt_callback(self.rightObstacleSensorGPIOChannel, self.rightObstacleSensorCallback)
+	self.dataLock.acquire()
+        self.leftObstacleSensorState = RPIO.input(self.leftObstacleSensorGPIOChannel)
+        if self.leftObstacleSensorState != RPIO.LOW:
+             self.leftObstacleState.set('True')
+        else:
+             self.leftObstacleState.set('False')
+        self.rightObstacleSensorState = RPIO.input(self.rightObstacleSensorGPIOChannel)
+        if self.rightObstacleSensorState != RPIO.LOW:
+             self.rightObstacleState.set('True')
+        else:
+             self.rightObstacleState.set('False')
+	self.dataLock.release()
 
 	# Set up the line sensors
 	RPIO.setup(self.leftLineSensorGPIOChannel, RPIO.IN)
 	RPIO.add_interrupt_callback(self.leftLineSensorGPIOChannel, self.leftLineSensorCallback)
 	RPIO.setup(self.rightLineSensorGPIOChannel, RPIO.IN)
 	RPIO.add_interrupt_callback(self.rightLineSensorGPIOChannel, self.rightLineSensorCallback)
+	self.dataLock.acquire()
+        self.leftLineSensorState = RPIO.input(self.leftLineSensorGPIOChannel)
+	print 'LLSS ', self.leftLineSensorState
+        if self.leftLineSensorState != RPIO.LOW:
+             self.leftLineState.set('True')
+        else:
+             self.leftLineState.set('False')
+        self.rightLineSensorState = RPIO.input(self.rightLineSensorGPIOChannel)
+	print 'RLSS ', self.rightLineSensorState
+        if self.rightLineSensorState != RPIO.LOW:
+             self.rightLineState.set('True')
+        else:
+             self.rightLineState.set('False')
+	self.dataLock.release()
 
 
     def forwardCallback(self, event):
@@ -378,26 +414,28 @@ class App:
 	print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftObstacleSensorCallback(self, gpio_id, value):
-	print 'Left obstacle sensor interrupt'
+	newvalue = bool(value)
+	print 'Left obstacle sensor interrupt', newvalue
 	self.dataLock.acquire()
 	oldvalue = self.leftObstacleSensorState
-	if oldvalue != value:
-             self.leftObstacleSensorState = value
-             self.obstacleSensorStateChange(oldvalue, value, self.rightObstacleSensorState, self.rightObstacleSensorState)
-             if value != 0:
+	if oldvalue != newvalue:
+             self.leftObstacleSensorState = newvalue
+             self.obstacleSensorStateChange(oldvalue, newvalue, self.rightObstacleSensorState, self.rightObstacleSensorState)
+             if newvalue != RPIO.LOW:
                  self.leftObstacleState.set('True')
              else:
                  self.leftObstacleState.set('False')
         self.dataLock.release()
 	 
     def rightObstacleSensorCallback(self, gpio_id, value):
-	print 'Right obstacle sensor interrupt'
+	newvalue = bool(value)
+	print 'Right obstacle sensor interrupt', newvalue
 	self.dataLock.acquire()
 	oldvalue = self.rightObstacleSensorState
-	if oldvalue != value:
-             self.rightObstacleSensorState = value
-             self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, value)
-             if value != 0:
+	if oldvalue != newvalue:
+             self.rightObstacleSensorState = newvalue
+             self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, newvalue)
+             if newvalue != RPIO.LOW:
                  self.rightObstacleState.set('True')
              else:
                  self.rightObstacleState.set('False')
@@ -407,21 +445,31 @@ class App:
 	print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftLineSensorCallback(self, gpio_id, value):
-	print 'Left line sensor interrupt'
+	newvalue = bool(value)
+	print 'Left line sensor interrupt', newvalue
 	self.dataLock.acquire()
 	oldvalue = self.leftLineSensorState
-	if oldvalue != value:
-             self.leftLineSensorState = value
-             self.lineSensorStateChange(oldvalue, value, self.rightLineSensorState, self.rightLineSensorState)
+	if oldvalue != newvalue:
+             self.leftLineSensorState = newvalue
+             self.lineSensorStateChange(oldvalue, newvalue, self.rightLineSensorState, self.rightLineSensorState)
+             if newvalue != RPIO.LOW:
+                 self.leftLineState.set('True')
+             else:
+                 self.leftLineState.set('False')
         self.dataLock.release()
 	 
     def rightLineSensorCallback(self, gpio_id, value):
-	print 'Right line sensor interrupt'
+	newvalue = bool(value)
+	print 'Right line sensor interrupt', newvalue
 	self.dataLock.acquire()
 	oldvalue = self.rightLineSensorState
-	if oldvalue != value:
-             self.rightLineSensorState = value
-             self.lineSensorStateChange(self.leftLineSensorState, self.leftLineSensorState, oldvalue, value)
+	if oldvalue != newvalue:
+             self.rightLineSensorState = newvalue
+             self.lineSensorStateChange(self.leftLineSensorState, self.leftLineSensorState, oldvalue, newvalue)
+             if newvalue != RPIO.LOW:
+                 self.rightLineState.set('True')
+             else:
+                 self.rightLineState.set('False')
         self.dataLock.release()
 	 
     def __del__(self):
