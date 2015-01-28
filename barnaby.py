@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import thread
+import time
 import math
 import RPIO
 from RPIO import PWM
@@ -28,18 +29,19 @@ class App:
 	self.motorStateSpinningLeft = 4
 	self.motorStateSpinningRight = 5
 	# GPIO channels Broadcom numbering is used by default
-	self.leftWheelSensorGPIOChannel = 22
-	self.rightWheelSensorGPIOChannel = 23
-	self.leftMotorForwardGPIOChannel = 10
-	self.leftMotorReverseGPIOChannel = 9
-	self.rightMotorForwardGPIOChannel = 8
-	self.rightMotorReverseGPIOChannel = 7
 	self.leftObstacleSensorGPIOChannel = 4
+	self.rightMotorReverseGPIOChannel = 7
+	self.rightMotorForwardGPIOChannel = 8
+	self.leftMotorReverseGPIOChannel = 9
+	self.leftMotorForwardGPIOChannel = 10
+        self.sonarGPIOChannel = 14
 	self.rightObstacleSensorGPIOChannel = 17
 	self.leftLineSensorGPIOChannel = 18
-	self.rightLineSensorGPIOChannel = 27
-	self.panServoGPIOChannel = 25
+	self.leftWheelSensorGPIOChannel = 22
+	self.rightWheelSensorGPIOChannel = 23
 	self.tiltServoGPIOChannel = 24
+	self.panServoGPIOChannel = 25
+	self.rightLineSensorGPIOChannel = 27
 	# DMA channels (engines) used by this module
 	# ==========================================
 	# From 3.12 onwards rasbian kernels have the broadcom dma module built in. 
@@ -92,21 +94,21 @@ class App:
 	motion = LabelFrame(master, text="Motion", padx=5, pady=5)
 	motion.pack(padx=10, pady=10)
 
-	self.forward = Button(motion, text="Forward")
-        self.forward.grid(row=0, column=1)
-	self.forward.bind("<Button-1>", self.forwardCallback)
-        self.left = Button(motion, text="Left")
-        self.left.grid(row=1, column=0)
-	self.left.bind("<Button-1>", self.leftCallback)
-        self.stop = Button(motion, text="Stop")
-        self.stop.grid(row=1, column=1)
-	self.stop.bind("<Button-1>", self.stopCallback)
-        self.right = Button(motion, text="Right")
-        self.right.grid(row=1, column=2)
-	self.right.bind("<Button-1>", self.rightCallback)
-        self.back = Button(motion, text="Back")
-        self.back.grid(row=2, column=1)
-	self.back.bind("<Button-1>", self.backCallback)
+	button = Button(motion, text="Forward")
+        button.grid(row=0, column=1)
+	button.bind("<Button-1>", self.forwardCallback)
+        button = Button(motion, text="Left")
+        button.grid(row=1, column=0)
+	button.bind("<Button-1>", self.leftCallback)
+        button = Button(motion, text="Stop")
+        button.grid(row=1, column=1)
+	button.bind("<Button-1>", self.stopCallback)
+        button = Button(motion, text="Right")
+        button.grid(row=1, column=2)
+	button.bind("<Button-1>", self.rightCallback)
+        button = Button(motion, text="Back")
+        button.grid(row=2, column=1)
+	button.bind("<Button-1>", self.backCallback)
 	speedframe = LabelFrame(master, text="Speed control", padx=5, pady=5)
 	speedframe.pack(padx=10, pady=10)
 	label = Label(speedframe, text="Drive style")
@@ -129,8 +131,8 @@ class App:
 	label.grid(row=2, column=0)
 	self.rotationRate = IntVar()
 	self.rotationRate.set(defaultRotationRate)
-	rotationRate = Spinbox(speedframe, from_=0, to=100, increment=10, textvariable=self.rotationRate)
-	rotationRate.grid(row=2, column=1)
+	spinbox = Spinbox(speedframe, from_=0, to=100, increment=10, textvariable=self.rotationRate)
+	spinbox.grid(row=2, column=1)
 	label = Label(speedframe, text="%")
 	label.grid(row=2, column=2)
 	label = Label(speedframe, text="Drive distance")
@@ -151,25 +153,31 @@ class App:
 	label.grid(row=4, column=2)
 	pantilt = LabelFrame(master, text="Pan Tilt Head", padx=5, pady=5)
 	pantilt.pack(padx=10, pady=10)
-	self.ptUp = Button(pantilt, text="Tilt Up")
-        self.ptUp.grid(row=0, column=1)
-	self.ptUp.bind("<Button-1>", self.ptUpCallback)
-        self.ptLeft = Button(pantilt, text="Pan Left")
-        self.ptLeft.grid(row=1, column=0)
-	self.ptLeft.bind("<Button-1>", self.ptLeftCallback)
-        self.ptCentre = Button(pantilt, text="Centre")
-        self.ptCentre.grid(row=1, column=1)
-	self.ptCentre.bind("<Button-1>", self.ptCentreCallback)
-        self.ptRight = Button(pantilt, text="Pan Right")
-        self.ptRight.grid(row=1, column=2)
-	self.ptRight.bind("<Button-1>", self.ptRightCallback)
-        self.ptDown = Button(pantilt, text="Tilt Down")
-        self.ptDown.grid(row=2, column=1)
-	self.ptDown.bind("<Button-1>", self.ptDownCallback)
+	button = Button(pantilt, text="Tilt Up")
+        button.grid(row=0, column=1)
+	button.bind("<Button-1>", self.ptUpCallback)
+        button = Button(pantilt, text="Pan Left")
+        button.grid(row=1, column=0)
+	button.bind("<Button-1>", self.ptLeftCallback)
+        button = Button(pantilt, text="Centre")
+        button.grid(row=1, column=1)
+	button.bind("<Button-1>", self.ptCentreCallback)
+        button = Button(pantilt, text="Pan Right")
+        button.grid(row=1, column=2)
+	button.bind("<Button-1>", self.ptRightCallback)
+        button = Button(pantilt, text="Tilt Down")
+        button.grid(row=2, column=1)
+	button.bind("<Button-1>", self.ptDownCallback)
 	sonar = LabelFrame(master, text="Sonar", padx=5, pady=5)
 	sonar.pack(padx=10, pady=10)
+        button = Button(sonar, text="Ping")
+        button.grid(row=0, column=0)
+	button.bind("<Button-1>", self.pingCallback)
 	label = Label(sonar, text="Range ")
-	label.grid(row=0, column=0)
+	label.grid(row=0, column=1)
+	self.range = IntVar()
+	label = Label(sonar, textvariable=self.range)
+	label.grid(row=0, column=2)
 	obstacle = LabelFrame(master, text="Obstacle sensors", padx=5, pady=5)
 	obstacle.pack(padx=10, pady=10)
 	label = Label(obstacle, text="Left ")
@@ -258,6 +266,31 @@ class App:
              self.rightLineState.set('False')
 	self.dataLock.release()
 
+    def pingCallback(self, event):
+	print 'pingCallback'
+        RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
+        # Send 10us pulse to trigger
+        RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
+        time.sleep(0.00001)
+        RPIO.output(self.sonarGPIOChannel, RPIO.LOW)
+	print 'sent pulse'
+        start = time.time()
+        count=time.time()
+        RPIO.setup(self.sonarGPIOChannel, RPIO.IN)
+        while RPIO.input(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
+            start = time.time()
+        count = time.time()
+        stop = count
+        while RPIO.input(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
+            stop = time.time()
+        # Calculate pulse length
+        elapsed = stop - start
+	print 'Got echo elasped = ', elapsed
+        # Distance pulse travelled in that time is time
+        # multiplied by the speed of sound (cm/s)
+        distance = elapsed * 34000
+        # That was the distance there and back so halve the value
+        self.range.set(distance / 2)
 
     def forwardCallback(self, event):
 	self.stopMotors()
