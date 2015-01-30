@@ -217,12 +217,12 @@ class App:
         sonar.grid(row=0, column=1, rowspan=5, padx=10, pady=10)
         
       
-        f = Figure(figsize=(5,4), dpi=100)
-        ax, aux_ax = self.setup_axes(f, 111)
+        figure = Figure(figsize=(5,4), dpi=100)
+        axis, auxiliary_axis = self.setup_axes(figure, 111)
         theta = [0, pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9, pi] 
-        radius = random.rand(11)*2.
-        aux_ax.plot(theta, radius)
-        canvas = FigureCanvasTkAgg(f, master=sonar)
+        radius = random.rand(11)*100.
+        auxiliary_axis.plot(theta, radius)
+        canvas = FigureCanvasTkAgg(figure, master=sonar)
         canvas.show()
         canvas.get_tk_widget().grid(row=0, column=0)
         
@@ -548,7 +548,7 @@ class App:
         Note that the extreme values are swapped.
         """
 
-        tr = PolarAxes.PolarTransform()
+        transform = PolarAxes.PolarTransform()
 
         angle_ticks = [(0, r"$Right$"),
                        (.5*pi, r"$Forward$"),
@@ -556,34 +556,38 @@ class App:
         grid_locator1 = FixedLocator([v for v, s in angle_ticks])
         tick_formatter1 = DictFormatter(dict(angle_ticks))
 
-        grid_locator2 = MaxNLocator(2)
+        grid_locator2 = MaxNLocator(4)
 
-        grid_helper = floating_axes.GridHelperCurveLinear(tr,
-                                            extremes=(pi, 0, 2, 0),
+        grid_helper = floating_axes.GridHelperCurveLinear(transform,
+                                            extremes=(0, pi, 100, 0),
                                             grid_locator1=grid_locator1,
                                             grid_locator2=grid_locator2,
                                             tick_formatter1=tick_formatter1,
                                             tick_formatter2=None,
                                             )
 
-        ax1 = floating_axes.FloatingSubplot(fig, rect, grid_helper=grid_helper)
-        fig.add_subplot(ax1)
+        axis1 = floating_axes.FloatingSubplot(fig, rect, grid_helper=grid_helper)
+        axis1.axis["bottom"].major_ticklabels.set_rotation(180)
+        axis1.axis["left"].set_axis_direction("bottom")
+        axis1.grid(b=True, which='major', color='b', linestyle='-')
+        fig.add_subplot(axis1)
 
         # create a parasite axes whose transData in RA, cz
-        aux_ax = ax1.get_aux_axes(tr)
+        auxiliary_axis = axis1.get_aux_axes(transform)
 
-        aux_ax.patch = ax1.patch # for aux_ax to have a clip path as in ax
-        ax1.patch.zorder=0.9 # but this has a side effect that the patch is
+        auxiliary_axis.patch = axis1.patch # for auxiliary_axis to have a clip path as in ax
+        axis1.patch.zorder=0.9 # but this has a side effect that the patch is
                             # drawn twice, and possibly over some other
                             # artists. So, we decrease the zorder a bit to
                             # prevent this.
 
-        return ax1, aux_ax
+        return axis1, auxiliary_axis
 
     def __del__(self):
 	    self.stopMotors()
 	    PWM.cleanup()
 
+print 'Initialising can take a few seconds - be patient!'
 root = Tk()
 
 root.title("Barnaby")
