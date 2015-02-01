@@ -11,22 +11,26 @@ import matplotlib
 matplotlib.use('TkAgg')
 from numpy import arange, sin, pi, random
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
-# implement the default mpl key bindings
-#from matplotlib.backend_bases import key_press_handler
 from matplotlib.transforms import Affine2D
 from matplotlib.projections import PolarAxes
 import  mpl_toolkits.axisartist.angle_helper as angle_helper
 from mpl_toolkits.axisartist.grid_finder import FixedLocator, MaxNLocator, \
-     DictFormatter
+    DictFormatter
 import mpl_toolkits.axisartist.floating_axes as floating_axes
 from matplotlib.figure import Figure
 
 from Tkinter import *
 
+import inspect
+
 class App:
 
+    def lineno(this):
+        """Returns the current line number in our program."""
+        return inspect.currentframe().f_back.f_lineno
+
     def __init__(self, master):
-    
+
         # Some starting constants
         self.servoIncrement = 100
         self.wheelDiameter = 5.4 # cm
@@ -43,22 +47,31 @@ class App:
         self.motorStateReverse = 3
         self.motorStateSpinningLeft = 4
         self.motorStateSpinningRight = 5
-        
+
         # GPIO channels Broadcom numbering is used by default
-        self.leftObstacleSensorGPIOChannel = 4
+        # The commented out settings are the standard 4 tronix ones
+        # The current settings are for a Pirocon v2 with IBoost64 daughter board
+        # Note the reversal of GPIO channels 22 and 23 and the move swapping
+        # of channels for the wheel sensors and obstacle sensors to allow access
+        # to JP2 header pins #04 and #17 (wrongly labelled #07 on the board)
+        #self.leftObstacleSensorGPIOChannel = 4
+        self.leftObstacleSensorGPIOChannel = 23
         self.rightMotorReverseGPIOChannel = 7
         self.rightMotorForwardGPIOChannel = 8
         self.leftMotorReverseGPIOChannel = 9
         self.leftMotorForwardGPIOChannel = 10
         self.sonarGPIOChannel = 14
-        self.rightObstacleSensorGPIOChannel = 17
+        #self.rightObstacleSensorGPIOChannel = 17
+        self.rightObstacleSensorGPIOChannel = 22
         self.leftLineSensorGPIOChannel = 18
-        self.leftWheelSensorGPIOChannel = 22
-        self.rightWheelSensorGPIOChannel = 23
+        #self.leftWheelSensorGPIOChannel = 22
+        self.leftWheelSensorGPIOChannel = 4
+        #self.rightWheelSensorGPIOChannel = 23
+        self.rightWheelSensorGPIOChannel = 17
         self.tiltServoGPIOChannel = 24
         self.panServoGPIOChannel = 25
         self.rightLineSensorGPIOChannel = 27
-        
+
         # DMA channels (engines) used by this module
         # ==========================================
         # From 3.12 onwards rasbian kernels have the broadcom dma module built in. 
@@ -89,7 +102,7 @@ class App:
         self.currentMotorState = self.motorStateStopped
         self.currentPan = 1500
         self.currentTilt = 1500
-        
+
         # Lock for global data
         self.dataLock = thread.allocate_lock()
 
@@ -104,7 +117,7 @@ class App:
         except IOError:
             print 'Cannot read dma manager please see code for help on what to do'
             exit(-1)
-                        
+
         # set up the GUI
         frame = Frame(master)
         frame.grid()
@@ -215,8 +228,7 @@ class App:
 
         sonar = LabelFrame(master, text="Sonar", padx=5, pady=5)
         sonar.grid(row=0, column=1, rowspan=5, padx=10, pady=10)
-        
-      
+
         figure = Figure(figsize=(5,4), dpi=100)
         axis, auxiliary_axis = self.setup_axes(figure, 111)
         theta = [0, pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9, pi] 
@@ -267,6 +279,7 @@ class App:
 
         # Set up obstacle sensors
         self.dataLock.acquire()
+        print 'Got the data lock ', self.lineno()
         RPIO.setup(self.leftObstacleSensorGPIOChannel, RPIO.IN)
         RPIO.add_interrupt_callback(self.leftObstacleSensorGPIOChannel, self.leftObstacleSensorCallback)
         RPIO.setup(self.rightObstacleSensorGPIOChannel, RPIO.IN)
@@ -282,9 +295,11 @@ class App:
         else:
             self.rightObstacleState.set('False')
         self.dataLock.release()
-        
+        print 'Released data lock ', self.lineno()
+
         # Set up the line sensors
         self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
         RPIO.setup(self.leftLineSensorGPIOChannel, RPIO.IN)
         RPIO.add_interrupt_callback(self.leftLineSensorGPIOChannel, self.leftLineSensorCallback)
         RPIO.setup(self.rightLineSensorGPIOChannel, RPIO.IN)
@@ -301,7 +316,8 @@ class App:
             self.rightLineState.set('True')
         else:
             self.rightLineState.set('False')
-	    self.dataLock.release()
+        self.dataLock.release()
+        print 'Released data lock ', self.lineno()
 
     def pingCallback(self, event):
         print 'pingCallback'
@@ -330,163 +346,187 @@ class App:
         self.range.set(distance / 2)
 
     def forwardCallback(self, event):
-	    self.stopMotors()
-	    if self.driveStyle.get() == 2:
-	        self.dataLock.acquire()
-	        self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
-	        self.dataLock.release()
-	    self.forwardMotors(self.driveSpeed.get())
-
+        self.stopMotors()
+        if self.driveStyle.get() == 2:
+            self.dataLock.acquire()
+            print 'Got the data lock', self.lineno()
+            self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
+            self.dataLock.release()
+            print 'Released data lock ', self.lineno()
+        self.forwardMotors(self.driveSpeed.get())
 
     def backCallback(self, event):
-	    self.stopMotors()
-	    if self.driveStyle.get() == 2:
-	        self.dataLock.acquire()
-	        self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
-	        self.dataLock.release()
-	    self.reverseMotors(self.driveSpeed.get())
+        self.stopMotors()
+        if self.driveStyle.get() == 2:
+            self.dataLock.acquire()
+            print 'Got the data lock', self.lineno()
+            self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
+            self.dataLock.release()
+            print 'Released data lock ', self.lineno()
+        self.reverseMotors(self.driveSpeed.get())
 
     def leftCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
             self.dataLock.acquire()
+            print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.dataLock.release()
+            print 'Released data lock ', self.lineno()
         self.spinLeftMotors(self.rotationRate.get())
 
     def rightCallback(self, event):
-	    self.stopMotors()
-	    if self.driveStyle.get() == 2:
-	        self.dataLock.acquire()
-	        self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
-	        self.dataLock.release()
-	    self.spinRightMotors(self.rotationRate.get())
+        self.stopMotors()
+        if self.driveStyle.get() == 2:
+            self.dataLock.acquire()
+            print 'Got the data lock', self.lineno()
+            self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
+            self.dataLock.release()
+            print 'Released data lock ', self.lineno()
+            self.spinRightMotors(self.rotationRate.get())
 
     def stopCallback(self, event):
-	    self.stopMotors()
+        self.stopMotors()
 
     def stopMotors(self):
-	    self.dataLock.acquire()
-	    if self.currentMotorState == self.motorStateForward:
-	        # Going forward
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
-	    elif self.currentMotorState == self.motorStateReverse:
-	        # Reversing
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
-	    elif self.currentMotorState == self.motorStateSpinningLeft:
-	        # Spinning left
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
-	    elif self.currentMotorState == self.motorStateSpinningRight:
-	        # Spinning right
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
-	        PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
-	    self.currentMotorState = self.motorStateStopped
-	    self.dataLock.release()
+        self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
+        if self.currentMotorState == self.motorStateForward:
+            # Going forward
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
+        elif self.currentMotorState == self.motorStateReverse:
+            # Reversing
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
+        elif self.currentMotorState == self.motorStateSpinningLeft:
+            # Spinning left
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
+        elif self.currentMotorState == self.motorStateSpinningRight:
+            # Spinning right
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
+            PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
+        self.currentMotorState = self.motorStateStopped
+        self.dataLock.release()
+        print 'Released data lock ', self.lineno()
 
     def forwardMotors(self, percent):
-	    localPercent = percent
-	    if localPercent == 100:
-	        localPercent = 99
-	    self.stopMotors() # Ensure consistent state
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    self.dataLock.acquire()
-	    self.currentMotorState = self.motorStateForward
-	    self.dataLock.release()
+        localPercent = percent
+        if localPercent == 100:
+            localPercent = 99
+        self.stopMotors() # Ensure consistent state
+        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
+        self.currentMotorState = self.motorStateForward
+        self.dataLock.release()
+        print 'Released data lock ', self.lineno()
 
     def reverseMotors(self, percent):
-	    localPercent = percent
-	    if localPercent == 100:
-	        localPercent = 99
-	    self.stopMotors() # Ensure consistent state
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    self.dataLock.acquire()
-	    self.currentMotorState = self.motorStateReverse
-	    self.dataLock.release()
+        localPercent = percent
+        if localPercent == 100:
+            localPercent = 99
+        self.stopMotors() # Ensure consistent state
+        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
+        self.currentMotorState = self.motorStateReverse
+        self.dataLock.release()
+        print 'Released data lock ', self.lineno()
 
     def spinLeftMotors(self, percent):
-	    localPercent = percent
-	    if localPercent == 100:
-	        localPercent = 99
-	    self.stopMotors() # Ensure consistent state
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    self.dataLock.acquire()
-	    self.currentMotorState = self.motorStateSpinningLeft
-	    self.dataLock.release()
+        localPercent = percent
+        if localPercent == 100:
+            localPercent = 99
+        self.stopMotors() # Ensure consistent state
+        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
+        self.currentMotorState = self.motorStateSpinningLeft
+        self.dataLock.release()
+        print 'Released data lock ', self.lineno()
 
     def spinRightMotors(self, percent):
-	    localPercent = percent
-	    if localPercent == 100:
-	        localPercent = 99
-	    self.stopMotors() # Ensure consistent state
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-	    self.dataLock.acquire()
-	    self.currentMotorState = self.motorStateSpinningRight
-	    self.dataLock.release()
+        localPercent = percent
+        if localPercent == 100:
+            localPercent = 99
+        self.stopMotors() # Ensure consistent state
+        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
+        self.currentMotorState = self.motorStateSpinningRight
+        self.dataLock.release()
+        print 'Released data lock ', self.lineno()
 
     def ptDownCallback(self, event):
-	    self.currentTilt += 100
-            if self.currentTilt > 2500:
-                self.currentTilt = 2500
-	    self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
-    
+        self.currentTilt += 100
+        if self.currentTilt > 2500:
+            self.currentTilt = 2500
+        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
+
     def ptUpCallback(self, event):
-	    self.currentTilt -= 100
-            if self.currentTilt < 500:
-                self.currentTilt = 500
-	    self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
-    
+        self.currentTilt -= 100
+        if self.currentTilt < 500:
+            self.currentTilt = 500
+        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
+
     def ptLeftCallback(self, event):
-	    self.currentPan += 100
-            if self.currentPan > 2500:
-                self.currentPan = 2500
-	    self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
-    
+        self.currentPan += 100
+        if self.currentPan > 2500:
+            self.currentPan = 2500
+        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+
     def ptRightCallback(self, event):
-	    self.currentPan -= 100
-            if self.currentPan < 500:
-                self.currentPan = 500
-	    self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
-    
+        self.currentPan -= 100
+        if self.currentPan < 500:
+            self.currentPan = 500
+        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+
     def ptCentreCallback(self, event):
-	    self.currentPan = 1500
-	    self.currentTilt = 1500
-	    self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
-	    self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
+        self.currentPan = 1500
+        self.currentTilt = 1500
+        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
 
     def leftWheelSensorCallback(self, gpio_id, value):
+        print 'Left wheel sensor state change ', value
         if self.leftWheelCount > 0:
             self.dataLock.acquire()
+            print 'Got the data lock', self.lineno()
             self.leftWheelCount = self.leftWheelCount - 1
             if self.leftWheelCount == 0:
                 self.stopMotors()
             self.leftWheelCount = -1
             self.rightWheelCount = -1
             self.dataLock.release()
+            print 'Released data lock ', self.lineno()
 
     def rightWheelSensorCallback(self, gpio_id, value):
-	    if self.rightWheelCount > 0:
-	        self.dataLock.acquire()
-	        self.rightWheelCount = self.rightWheelCount - 1
-	        if self.rightWheelCount == 0:
-	        	self.stopMotors()
+        print 'Right wheel sensor state change ', value
+        if self.rightWheelCount > 0:
+            self.dataLock.acquire()
+            print 'Got the data lock', self.lineno()
+            self.rightWheelCount = self.rightWheelCount - 1
+            if self.rightWheelCount == 0:
+                self.stopMotors()
             self.leftWheelCount = -1
             self.rightWheelCount = -1
             self.dataLock.release()
+            print 'Released data lock ', self.lineno()
 
     def obstacleSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
-	    print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
+        print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftObstacleSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Left obstacle sensor interrupt', newvalue
+        print 'Left obstacle sensor state chnage ', newvalue
         self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
         oldvalue = self.leftObstacleSensorState
         if oldvalue != newvalue:
             self.leftObstacleSensorState = newvalue
@@ -496,11 +536,13 @@ class App:
             else:
                 self.leftObstacleState.set('False')
         self.dataLock.release()
-	 
+        print 'Released data lock ', self.lineno()
+
     def rightObstacleSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Right obstacle sensor interrupt', newvalue
+        print 'Right obstacle sensor state change ', newvalue
         self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
         oldvalue = self.rightObstacleSensorState
         if oldvalue != newvalue:
             self.rightObstacleSensorState = newvalue
@@ -508,16 +550,18 @@ class App:
             if newvalue != RPIO.LOW:
                self.rightObstacleState.set('True')
             else:
-              self.rightObstacleState.set('False')
+                self.rightObstacleState.set('False')
         self.dataLock.release()
-	 
+        print 'Released data lock ', self.lineno()
+
     def lineSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
-	    print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
+        print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftLineSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Left line sensor interrupt', newvalue
+        print 'Left line sensor state change ', newvalue
         self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
         oldvalue = self.leftLineSensorState
         if oldvalue != newvalue:
             self.leftLineSensorState = newvalue
@@ -527,11 +571,13 @@ class App:
             else:
                 self.leftLineState.set('False')
         self.dataLock.release()
-	 
+        print 'Released data lock ', self.lineno()
+
     def rightLineSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Right line sensor interrupt', newvalue
+        print 'Right line sensor state change ', newvalue
         self.dataLock.acquire()
+        print 'Got the data lock', self.lineno()
         oldvalue = self.rightLineSensorState
         if oldvalue != newvalue:
             self.rightLineSensorState = newvalue
@@ -541,7 +587,8 @@ class App:
             else:
                 self.rightLineState.set('False')
         self.dataLock.release()
-	 
+        print 'Released data lock ', self.lineno()
+
     def setup_axes(self, fig, rect):
         """
         With custom locator and formatter.
@@ -584,8 +631,8 @@ class App:
         return axis1, auxiliary_axis
 
     def __del__(self):
-	    self.stopMotors()
-	    PWM.cleanup()
+        self.stopMotors()
+        PWM.cleanup()
 
 print 'Initialising can take a few seconds - be patient!'
 root = Tk()
