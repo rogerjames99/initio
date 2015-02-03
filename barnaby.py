@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import thread
+import threading
 import time
 import math
 import RPIO
@@ -22,6 +22,24 @@ from matplotlib.figure import Figure
 from Tkinter import *
 
 import inspect
+
+# Event for sonar scan
+pingEvent = threading.Event()
+pingTerminate = False
+        
+def pingThreadHandler():
+    while not pingTerminate:
+        print 'Waiting for event'
+        pingEvent.wait()
+        print 'Back from wait', pingTerminate
+        pingEvent.clear()
+        if not pingTerminate:
+            print 'Do something'
+        print 'End of loop'
+
+# Thread for sonar scan
+pingThread = threading.Thread(target = pingThreadHandler)
+pingThread.start()
 
 class App:
 
@@ -104,8 +122,8 @@ class App:
         self.currentTilt = 1500
 
         # Lock for global data
-        self.dataLock = thread.allocate_lock()
-
+        self.dataLock = threading.Lock()
+              
         # Check if the dma channels are correctly reserved
         try:
             dmamanager = open('/sys/module/dma/parameters/dmachans', mode='r')
@@ -117,10 +135,11 @@ class App:
         except IOError:
             print 'Cannot read dma manager please see code for help on what to do'
             exit(-1)
-
+        
+        # Catch the destroy event
+        master.protocol('WM_DELETE_WINDOW', self.wmDeleteWindowHandler)
+        
         # set up the GUI
-        frame = Frame(master)
-        frame.grid()
         motion = LabelFrame(master, text="Motion", padx=5, pady=5)
         motion.grid(row=0, column=0, padx=10, pady=10)
         button = Button(motion, text="Forward")
@@ -318,7 +337,14 @@ class App:
             self.rightLineState.set('False')
         self.dataLock.release()
         print 'Released data lock ', self.lineno()
-
+        
+    def wmDeleteWindowHandler(self):
+        global pingTerminate, pingEvent, root
+        print 'wmDeleteWindowHandler'
+        pingTerminate = True
+        pingEvent.set()
+        root.destroy()
+            
     def pingCallback(self, event):
         print 'pingCallback'
         RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
@@ -631,7 +657,7 @@ class App:
         return axis1, auxiliary_axis
 
     def __del__(self):
-        self.stopMotors()
+        print '__del__ called'
         PWM.cleanup()
 
 print 'Initialising can take a few seconds - be patient!'
