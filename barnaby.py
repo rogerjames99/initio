@@ -23,24 +23,6 @@ from Tkinter import *
 
 import inspect
 
-# Event for sonar scan
-pingEvent = threading.Event()
-pingTerminate = False
-        
-def pingThreadHandler():
-    while not pingTerminate:
-        print 'Waiting for event'
-        pingEvent.wait()
-        print 'Back from wait', pingTerminate
-        pingEvent.clear()
-        if not pingTerminate:
-            print 'Do something'
-        print 'End of loop'
-
-# Thread for sonar scan
-pingThread = threading.Thread(target = pingThreadHandler)
-pingThread.start()
-
 class App:
 
     def lineno(this):
@@ -90,23 +72,28 @@ class App:
         self.panServoGPIOChannel = 25
         self.rightLineSensorGPIOChannel = 27
 
-        # DMA channels (engines) used by this module
-        # ==========================================
-        # From 3.12 onwards rasbian kernels have the broadcom dma module built in. 
-        # This module manages access to dma resources for kernel device drivers
-        # To see what channels are free to use try 'cat /sys/module/dma/parameters/dmachans'.
-        # You should see the value 32565 returned, converted to hex this gives 0x7f35.
-        # This is a bit mask so a 0 bit means that the channel is reserved.
-        # You need to add the channels used by this module to this mask.
-        # To do this edit /boot/cmdline.txt and add dma.dmachans=0x7f05 to the end and reboot.
-        # If a non default dma.dmachans parameter is already present you will have to work out what channels are free
-        # and modify the allocations below to match before editing the value there.
-        # You can check if this has worked by looking at /sys/module/dma/parameters/dmachans again.
-        # Adding our channels to this list stops the kernel from grabbing them from underneath us!
-        # If you want to use different channels remember that dma channel 0 is a special channel
-        # and should not be used, it is not in the reserved list because various kernel subsystems need
-        # to use it from time to time and they reserve it on a ad-hoc basis. Channel 15 should never be used
-        # and is normally already in the default reserve list.
+        """
+        DMA channels (engines) used by this module
+        ==========================================
+        From 3.12 onwards rasbian kernels have the broadcom dma module built in. 
+        This module manages access to dma resources for kernel device drivers
+        To see what channels are currently free to use try 'cat /sys/module/dma/parameters/dmachans'.
+        You should see the value 32565 returned, converted to hex this gives 0x7f35.
+        This is a bit mask so a 0 bit means that the channel is currently reserved.
+        You need to add the channels used by this module to the kernel parameter that
+        is used to initialise this mask.
+        
+        To do this edit /boot/cmdline.txt and add dma.dmachans=0x7f05 to the end and reboot.
+        If a non default dma.dmachans parameter is already present you will have to work out what channels are free
+        and modify the allocations below to match before editing the value there.
+        You can check if this has worked by looking at /sys/module/dma/parameters/dmachans again.
+        Adding our channels to this list stops the kernel from grabbing them from underneath us!
+        If you want to use different channels remember that dma channel 0 is a special channel
+        and should not be used, it is not in the reserved list because various kernel subsystems need
+        to use it from time to time and they reserve it on a ad-hoc basis. Channel 15 should never be used
+        and is normally already in the default reserve list.
+        """
+        
         self.motorDmaChannel = 4
         self.servoDmaChannel = 5
 
@@ -122,8 +109,15 @@ class App:
         self.currentTilt = 1500
 
         # Lock for global data
-        self.dataLock = threading.Lock()
+        self.dataLock = threading.RLock()
               
+        # Event for sonar scan
+        self.pingEvent = threading.Event()
+        self.pingTerminate = False
+        
+        # Flag to notify that new sonar data is ready
+        self.newSonarDataAvailable = False
+        
         # Check if the dma channels are correctly reserved
         try:
             dmamanager = open('/sys/module/dma/parameters/dmachans', mode='r')
@@ -136,6 +130,14 @@ class App:
             print 'Cannot read dma manager please see code for help on what to do'
             exit(-1)
         
+        # Kick off idle processing
+        # master.after_idle(self.idleCallback)
+
+        
+        # Thread for sonar scan
+        pingThread = threading.Thread(target = self.pingThreadHandler)
+        pingThread.start()
+
         # Catch the destroy event
         master.protocol('WM_DELETE_WINDOW', self.wmDeleteWindowHandler)
         
@@ -249,10 +251,7 @@ class App:
         sonar.grid(row=0, column=1, rowspan=5, padx=10, pady=10)
 
         figure = Figure(figsize=(5,4), dpi=100)
-        axis, auxiliary_axis = self.setup_axes(figure, 111)
-        theta = [0, pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9, pi] 
-        radius = random.rand(11)*100.
-        auxiliary_axis.plot(theta, radius)
+        axis, self.auxiliary_axis = self.setup_axes(figure, 111)
         canvas = FigureCanvasTkAgg(figure, master=sonar)
         canvas.show()
         canvas.get_tk_widget().grid(row=0, column=0)
@@ -260,11 +259,6 @@ class App:
         button = Button(sonar, text="Ping")
         button.grid(row=1, column=0)
         button.bind("<Button-1>", self.pingCallback)
-        label = Label(sonar, text="Range ")
-        label.grid(row=0, column=1)
-        self.range = IntVar()
-        label = Label(sonar, textvariable=self.range)
-        label.grid(row=0, column=2)
 
         # Setup GPIO interrupt handling
         # Handle all GPIO interrupts in a separate thread so a not to block the GUI
@@ -338,38 +332,66 @@ class App:
         self.dataLock.release()
         print 'Released data lock ', self.lineno()
         
+    def pingThreadHandler(self):
+        global root
+        while not self.pingTerminate:
+            self.pingEvent.wait()
+            self.pingEvent.clear()
+            if not self.pingTerminate:
+                RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
+                # Send 10us pulse to trigger
+                RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
+                time.sleep(0.00001)
+                RPIO.output(self.sonarGPIOChannel, RPIO.LOW)
+                print 'sent pulse'
+                start = time.time()
+                count=time.time()
+                RPIO.setup(self.sonarGPIOChannel, RPIO.IN)
+                while RPIO.input(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
+                    start = time.time()
+                count = time.time()
+                stop = count
+                while RPIO.input(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
+                    stop = time.time()
+                # Calculate pulse length
+                elapsed = stop - start
+                print 'Got echo elasped = ', elapsed
+                # Distance pulse travelled in that time is time
+                # multiplied by the speed of sound (cm/s)
+                # That was the distance there and back so halve the value
+                distance = int(elapsed * 34000) / 2
+                self.theta = [0, pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9, pi] 
+                self.radius = [distance,distance,distance,distance,distance,distance,distance,distance,distance,distance,distance]
+                self.dataLock.acquire()
+                print 'Got the data lock', self.lineno()
+                self.newSonarDataAvailable = True
+                self.dataLock.release()
+                print 'Released data lock ', self.lineno()
+                root.after_idle(self.idleCallback)
+
     def wmDeleteWindowHandler(self):
-        global pingTerminate, pingEvent, root
-        print 'wmDeleteWindowHandler'
-        pingTerminate = True
-        pingEvent.set()
+        global root
+        self.pingTerminate = True
+        self.pingEvent.set()
         root.destroy()
             
     def pingCallback(self, event):
         print 'pingCallback'
-        RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
-        # Send 10us pulse to trigger
-        RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
-        time.sleep(0.00001)
-        RPIO.output(self.sonarGPIOChannel, RPIO.LOW)
-        print 'sent pulse'
-        start = time.time()
-        count=time.time()
-        RPIO.setup(self.sonarGPIOChannel, RPIO.IN)
-        while RPIO.input(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
-            start = time.time()
-        count = time.time()
-        stop = count
-        while RPIO.input(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
-            stop = time.time()
-        # Calculate pulse length
-        elapsed = stop - start
-        print 'Got echo elasped = ', elapsed
-        # Distance pulse travelled in that time is time
-        # multiplied by the speed of sound (cm/s)
-        distance = elapsed * 34000
-        # That was the distance there and back so halve the value
-        self.range.set(distance / 2)
+        self.pingEvent.set()
+        
+    def idleCallback(self):
+        global root
+        plotit = False
+        self.dataLock.acquire()
+        if self.newSonarDataAvailable:
+            plotit = True
+            theta = self.theta
+            radius = self.radius
+            selfNewSonarDataAvailable = False
+        self.dataLock.release()
+        if plotit:
+            print 'Plotting'
+            self.auxiliary_axis.plot(theta, radius)
 
     def forwardCallback(self, event):
         self.stopMotors()
@@ -409,7 +431,7 @@ class App:
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.dataLock.release()
             print 'Released data lock ', self.lineno()
-            self.spinRightMotors(self.rotationRate.get())
+        self.spinRightMotors(self.rotationRate.get())
 
     def stopCallback(self, event):
         self.stopMotors()
@@ -527,8 +549,8 @@ class App:
             self.leftWheelCount = self.leftWheelCount - 1
             if self.leftWheelCount == 0:
                 self.stopMotors()
-            self.leftWheelCount = -1
-            self.rightWheelCount = -1
+                self.leftWheelCount = -1
+                self.rightWheelCount = -1
             self.dataLock.release()
             print 'Released data lock ', self.lineno()
 
@@ -540,8 +562,8 @@ class App:
             self.rightWheelCount = self.rightWheelCount - 1
             if self.rightWheelCount == 0:
                 self.stopMotors()
-            self.leftWheelCount = -1
-            self.rightWheelCount = -1
+                self.leftWheelCount = -1
+                self.rightWheelCount = -1
             self.dataLock.release()
             print 'Released data lock ', self.lineno()
 
@@ -550,7 +572,7 @@ class App:
 
     def leftObstacleSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Left obstacle sensor state chnage ', newvalue
+        print 'Left obstacle sensor state change ', newvalue
         self.dataLock.acquire()
         print 'Got the data lock', self.lineno()
         oldvalue = self.leftObstacleSensorState
@@ -657,7 +679,6 @@ class App:
         return axis1, auxiliary_axis
 
     def __del__(self):
-        print '__del__ called'
         PWM.cleanup()
 
 print 'Initialising can take a few seconds - be patient!'
