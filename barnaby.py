@@ -30,6 +30,7 @@ class App:
         return inspect.currentframe().f_back.f_lineno
 
     def __init__(self, master):
+        
 
         # Some starting constants
         self.servoIncrement = 100
@@ -70,7 +71,10 @@ class App:
         self.rightWheelSensorGPIOChannel = 17
         self.tiltServoGPIOChannel = 24
         self.panServoGPIOChannel = 25
-        self.rightLineSensorGPIOChannel = 27
+        if RPIO.RPI_REVISION == 1:
+            self.rightLineSensorGPIOChannel = 21
+        else:
+            self.rightLineSensorGPIOChannel = 27
 
         """
         DMA channels (engines) used by this module
@@ -107,7 +111,15 @@ class App:
         self.currentMotorState = self.motorStateStopped
         self.currentPan = 1500
         self.currentTilt = 1500
-
+        
+        # Sonar plot data
+        self.theta = [pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9]
+        self.radius = []
+        self.panpos = []
+        for theta in self.theta:
+            self.radius.append(0.)
+            self.panpos.append(500 + int((2000.0 * theta) / (pi * 10.0)) * 10)
+            
         # Lock for global data
         self.dataLock = threading.RLock()
               
@@ -252,9 +264,9 @@ class App:
 
         figure = Figure(figsize=(5,4), dpi=100)
         axis, self.auxiliary_axis = self.setup_axes(figure, 111)
-        canvas = FigureCanvasTkAgg(figure, master=sonar)
-        canvas.show()
-        canvas.get_tk_widget().grid(row=0, column=0)
+        self.canvas = FigureCanvasTkAgg(figure, master=sonar)
+        self.canvas.show()
+        self.canvas.get_tk_widget().grid(row=0, column=0)
         
         button = Button(sonar, text="Ping")
         button.grid(row=1, column=0)
@@ -273,11 +285,11 @@ class App:
         RPIO.setup(self.rightMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
         RPIO.setup(self.rightMotorReverseGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
         currentPulseIncrementMicroseconds = PWM.get_pulse_incr_us()
-        print "currentPulseIncrementMicroseconds ", currentPulseIncrementMicroseconds 
+        #print "currentPulseIncrementMicroseconds ", currentPulseIncrementMicroseconds 
         PWM.init_channel(self.motorDmaChannel, self.subcycleWidthMicroseconds)
-        print "subcycleWidthMicroseconds ", self.subcycleWidthMicroseconds
+        #print "subcycleWidthMicroseconds ", self.subcycleWidthMicroseconds
         self.pulseIncrementsPercent = self.subcycleWidthMicroseconds / currentPulseIncrementMicroseconds / 100
-        print "pulseIncrementPercent ", self.pulseIncrementsPercent
+        #print "pulseIncrementPercent ", self.pulseIncrementsPercent
 
         # Initialise the servos
         self.Servos = PWM.Servo(self.servoDmaChannel, 20000)
@@ -292,7 +304,7 @@ class App:
 
         # Set up obstacle sensors
         self.dataLock.acquire()
-        print 'Got the data lock ', self.lineno()
+        #print 'Got the data lock ', self.lineno()
         RPIO.setup(self.leftObstacleSensorGPIOChannel, RPIO.IN)
         RPIO.add_interrupt_callback(self.leftObstacleSensorGPIOChannel, self.leftObstacleSensorCallback)
         RPIO.setup(self.rightObstacleSensorGPIOChannel, RPIO.IN)
@@ -308,29 +320,30 @@ class App:
         else:
             self.rightObstacleState.set('False')
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
         # Set up the line sensors
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         RPIO.setup(self.leftLineSensorGPIOChannel, RPIO.IN)
         RPIO.add_interrupt_callback(self.leftLineSensorGPIOChannel, self.leftLineSensorCallback)
+        #print 'RLS ', self.rightLineSensorGPIOChannel
         RPIO.setup(self.rightLineSensorGPIOChannel, RPIO.IN)
         RPIO.add_interrupt_callback(self.rightLineSensorGPIOChannel, self.rightLineSensorCallback)
         self.leftLineSensorState = RPIO.input(self.leftLineSensorGPIOChannel)
-        print 'LLSS ', self.leftLineSensorState
+        #print 'LLSS ', self.leftLineSensorState
         if self.leftLineSensorState != RPIO.LOW:
             self.leftLineState.set('True')
-        else:
+        #else:
             self.leftLineState.set('False')
         self.rightLineSensorState = RPIO.input(self.rightLineSensorGPIOChannel)
-        print 'RLSS ', self.rightLineSensorState
+        #print 'RLSS ', self.rightLineSensorState
         if self.rightLineSensorState != RPIO.LOW:
             self.rightLineState.set('True')
         else:
             self.rightLineState.set('False')
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
         
     def pingThreadHandler(self):
         global root
@@ -338,35 +351,46 @@ class App:
             self.pingEvent.wait()
             self.pingEvent.clear()
             if not self.pingTerminate:
-                RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
-                # Send 10us pulse to trigger
-                RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
-                time.sleep(0.00001)
-                RPIO.output(self.sonarGPIOChannel, RPIO.LOW)
-                print 'sent pulse'
-                start = time.time()
-                count=time.time()
-                RPIO.setup(self.sonarGPIOChannel, RPIO.IN)
-                while RPIO.input(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
+                index = int(0)
+                for theta in self.theta:
+                    # Pan the servo
+                    self.currentPan = self.panpos[index]
+                    self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+                    time.sleep(1.0)
+                    RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
+                    # Send 10us pulse to trigger
+                    RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
+                    time.sleep(0.00001)
+                    RPIO.output(self.sonarGPIOChannel, RPIO.LOW)
+                    #print 'sent pulse'
                     start = time.time()
-                count = time.time()
-                stop = count
-                while RPIO.input(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
-                    stop = time.time()
-                # Calculate pulse length
-                elapsed = stop - start
-                print 'Got echo elasped = ', elapsed
-                # Distance pulse travelled in that time is time
-                # multiplied by the speed of sound (cm/s)
-                # That was the distance there and back so halve the value
-                distance = int(elapsed * 34000) / 2
-                self.theta = [0, pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9, pi] 
-                self.radius = [distance,distance,distance,distance,distance,distance,distance,distance,distance,distance,distance]
+                    count=time.time()
+                    RPIO.setup(self.sonarGPIOChannel, RPIO.IN)
+                    while RPIO.input(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
+                        start = time.time()
+                    count = time.time()
+                    stop = count
+                    while RPIO.input(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
+                        stop = time.time()
+                    # Calculate pulse length
+                    elapsed = stop - start
+                    #print 'Got echo elasped = ', elapsed
+                    # Distance pulse travelled in that time is time
+                    # multiplied by the speed of sound (cm/s)
+                    # That was the distance there and back so halve the value
+                    distance = int(elapsed * 34000) / 2
+                    #print 'distance ', distance
+                    self.dataLock.acquire()
+                    #print 'Got the data lock', self.lineno()
+                    self.radius[index] = distance             
+                    self.dataLock.release()
+                    #print 'Released data lock ', self.lineno()
+                    index = index + 1
                 self.dataLock.acquire()
-                print 'Got the data lock', self.lineno()
+                #print 'Got the data lock', self.lineno()
                 self.newSonarDataAvailable = True
                 self.dataLock.release()
-                print 'Released data lock ', self.lineno()
+                #print 'Released data lock ', self.lineno()
                 root.after_idle(self.idleCallback)
 
     def wmDeleteWindowHandler(self):
@@ -376,7 +400,7 @@ class App:
         root.destroy()
             
     def pingCallback(self, event):
-        print 'pingCallback'
+        #print 'pingCallback'
         self.pingEvent.set()
         
     def idleCallback(self):
@@ -390,47 +414,48 @@ class App:
             selfNewSonarDataAvailable = False
         self.dataLock.release()
         if plotit:
-            print 'Plotting'
-            self.auxiliary_axis.plot(theta, radius)
-
+            #print 'Plotting'
+            self.lines.set_data(self.theta, self.radius)
+            self.canvas.draw()
+            
     def forwardCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
             self.dataLock.acquire()
-            print 'Got the data lock', self.lineno()
+            #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
             self.dataLock.release()
-            print 'Released data lock ', self.lineno()
+            #print 'Released data lock ', self.lineno()
         self.forwardMotors(self.driveSpeed.get())
 
     def backCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
             self.dataLock.acquire()
-            print 'Got the data lock', self.lineno()
+            #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
             self.dataLock.release()
-            print 'Released data lock ', self.lineno()
+            #print 'Released data lock ', self.lineno()
         self.reverseMotors(self.driveSpeed.get())
 
     def leftCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
             self.dataLock.acquire()
-            print 'Got the data lock', self.lineno()
+            #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.dataLock.release()
-            print 'Released data lock ', self.lineno()
+            #print 'Released data lock ', self.lineno()
         self.spinLeftMotors(self.rotationRate.get())
 
     def rightCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
             self.dataLock.acquire()
-            print 'Got the data lock', self.lineno()
+            #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.dataLock.release()
-            print 'Released data lock ', self.lineno()
+            #print 'Released data lock ', self.lineno()
         self.spinRightMotors(self.rotationRate.get())
 
     def stopCallback(self, event):
@@ -438,7 +463,7 @@ class App:
 
     def stopMotors(self):
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         if self.currentMotorState == self.motorStateForward:
             # Going forward
             PWM.clear_channel_gpio(self.motorDmaChannel, self.leftMotorForwardGPIOChannel) # This appears to set the output to 0, which is good!
@@ -457,7 +482,7 @@ class App:
             PWM.clear_channel_gpio(self.motorDmaChannel, self.rightMotorReverseGPIOChannel) # This appears to set the output to 0, which is good!
         self.currentMotorState = self.motorStateStopped
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def forwardMotors(self, percent):
         localPercent = percent
@@ -467,10 +492,10 @@ class App:
         PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateForward
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def reverseMotors(self, percent):
         localPercent = percent
@@ -480,10 +505,10 @@ class App:
         PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateReverse
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def spinLeftMotors(self, percent):
         localPercent = percent
@@ -493,10 +518,10 @@ class App:
         PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateSpinningLeft
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def spinRightMotors(self, percent):
         localPercent = percent
@@ -506,10 +531,10 @@ class App:
         PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateSpinningRight
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def ptDownCallback(self, event):
         self.currentTilt += 100
@@ -542,39 +567,39 @@ class App:
         self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
 
     def leftWheelSensorCallback(self, gpio_id, value):
-        print 'Left wheel sensor state change ', value
+        #print 'Left wheel sensor state change ', value
         if self.leftWheelCount > 0:
             self.dataLock.acquire()
-            print 'Got the data lock', self.lineno()
+            #print 'Got the data lock', self.lineno()
             self.leftWheelCount = self.leftWheelCount - 1
             if self.leftWheelCount == 0:
                 self.stopMotors()
                 self.leftWheelCount = -1
                 self.rightWheelCount = -1
             self.dataLock.release()
-            print 'Released data lock ', self.lineno()
+            #print 'Released data lock ', self.lineno()
 
     def rightWheelSensorCallback(self, gpio_id, value):
-        print 'Right wheel sensor state change ', value
+        #print 'Right wheel sensor state change ', value
         if self.rightWheelCount > 0:
             self.dataLock.acquire()
-            print 'Got the data lock', self.lineno()
+            #print 'Got the data lock', self.lineno()
             self.rightWheelCount = self.rightWheelCount - 1
             if self.rightWheelCount == 0:
                 self.stopMotors()
                 self.leftWheelCount = -1
                 self.rightWheelCount = -1
             self.dataLock.release()
-            print 'Released data lock ', self.lineno()
+            #print 'Released data lock ', self.lineno()
 
     def obstacleSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
         print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftObstacleSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Left obstacle sensor state change ', newvalue
+        #print 'Left obstacle sensor state change ', newvalue
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         oldvalue = self.leftObstacleSensorState
         if oldvalue != newvalue:
             self.leftObstacleSensorState = newvalue
@@ -584,13 +609,13 @@ class App:
             else:
                 self.leftObstacleState.set('False')
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def rightObstacleSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Right obstacle sensor state change ', newvalue
+        #print 'Right obstacle sensor state change ', newvalue
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         oldvalue = self.rightObstacleSensorState
         if oldvalue != newvalue:
             self.rightObstacleSensorState = newvalue
@@ -600,16 +625,16 @@ class App:
             else:
                 self.rightObstacleState.set('False')
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def lineSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
         print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
 
     def leftLineSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Left line sensor state change ', newvalue
+        #print 'Left line sensor state change ', newvalue
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         oldvalue = self.leftLineSensorState
         if oldvalue != newvalue:
             self.leftLineSensorState = newvalue
@@ -619,13 +644,13 @@ class App:
             else:
                 self.leftLineState.set('False')
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def rightLineSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
-        print 'Right line sensor state change ', newvalue
+        #print 'Right line sensor state change ', newvalue
         self.dataLock.acquire()
-        print 'Got the data lock', self.lineno()
+        #print 'Got the data lock', self.lineno()
         oldvalue = self.rightLineSensorState
         if oldvalue != newvalue:
             self.rightLineSensorState = newvalue
@@ -635,7 +660,7 @@ class App:
             else:
                 self.rightLineState.set('False')
         self.dataLock.release()
-        print 'Released data lock ', self.lineno()
+        #print 'Released data lock ', self.lineno()
 
     def setup_axes(self, fig, rect):
         """
@@ -676,6 +701,7 @@ class App:
                             # artists. So, we decrease the zorder a bit to
                             # prevent this.
 
+        self.lines, = auxiliary_axis.plot(self.theta, self.radius)
         return axis1, auxiliary_axis
 
     def __del__(self):
