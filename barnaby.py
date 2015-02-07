@@ -40,9 +40,9 @@ class App:
         defaultRotationRate = 60 # %
         defaultDriveDistance = 10 # cm
         defaultRotationAmount = 90 # degrees
-        self.subcycleFrequency = 100 # Hz - I cannot seem to get this to work much above 125 Hz
-        self.subcycleWidthMicroseconds = 1000000 / self.subcycleFrequency
-        self.defaultPowerPercentage = 14  # 14% seems about as low as I can take it without the motor stalling at 100 Hz
+        self.pulseIncrementMicroseconds = int()
+        self.subcycleWidthMicroseconds =  4000 # This is the lowest I can get to work on a rev 1 board
+        self.defaultPowerPercentage = 14  # 14% seems about as low as I can take it without the motor stalling
         self.motorStateStopped = 1
         self.motorStateForward = 2
         self.motorStateReverse = 3
@@ -178,10 +178,12 @@ class App:
         label.grid(row=0, column=1)
         self.driveStyle = IntVar()
         self.driveStyle.set(1)
-        continuous = Radiobutton(speedframe, text="Continuous", variable=self.driveStyle, value=1)
-        continuous.grid(row=0, column=1)
-        incremental = Radiobutton(speedframe, text="Incremental", variable=self.driveStyle, value=2)
-        incremental.grid(row=0, column=2)
+        button = Radiobutton(speedframe, text="Continuous", variable=self.driveStyle, value=1)
+        button.grid(row=0, column=0)
+        button = Radiobutton(speedframe, text="Incremental", variable=self.driveStyle, value=2)
+        button.grid(row=0, column=1)
+        button = Radiobutton(speedframe, text="Autonomous", variable=self.driveStyle, value=3)
+        button.grid(row=0, column=2)
         label = Label(speedframe, text="Drive speed")
         label.grid(row=1, column=0)
         self.driveSpeed = IntVar()
@@ -280,16 +282,12 @@ class App:
 
         # Initialise the motor control
         PWM.setup(delay_hw=PWM.DELAY_VIA_PCM) # RPIO PWM does not work on multiple dma channels when used with the DELAY_VIA_PWM timing source
+        self.pulseIncrementMicroseconds = PWM.get_pulse_incr_us()
         RPIO.setup(self.leftMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
         RPIO.setup(self.leftMotorReverseGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
         RPIO.setup(self.rightMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
         RPIO.setup(self.rightMotorReverseGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
-        currentPulseIncrementMicroseconds = PWM.get_pulse_incr_us()
-        #print "currentPulseIncrementMicroseconds ", currentPulseIncrementMicroseconds 
         PWM.init_channel(self.motorDmaChannel, self.subcycleWidthMicroseconds)
-        #print "subcycleWidthMicroseconds ", self.subcycleWidthMicroseconds
-        self.pulseIncrementsPercent = self.subcycleWidthMicroseconds / currentPulseIncrementMicroseconds / 100
-        #print "pulseIncrementPercent ", self.pulseIncrementsPercent
 
         # Initialise the servos
         self.Servos = PWM.Servo(self.servoDmaChannel, 20000)
@@ -426,7 +424,10 @@ class App:
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
-        self.forwardMotors(self.driveSpeed.get())
+        elif self.driveStyle.get() == 1:
+            self.forwardMotors(self.driveSpeed.get())
+        else:
+            self.autonomousDriving()
 
     def backCallback(self, event):
         self.stopMotors()
@@ -436,7 +437,10 @@ class App:
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
-        self.reverseMotors(self.driveSpeed.get())
+        elif self.driveStyle.get() == 1:
+            self.reverseMotors(self.driveSpeed.get())
+        else:
+            self.autonomousDriving()
 
     def leftCallback(self, event):
         self.stopMotors()
@@ -446,7 +450,10 @@ class App:
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
-        self.spinLeftMotors(self.rotationRate.get())
+        elif self.driveStyle.get() == 1:
+            self.spinLeftMotors(self.rotationRate.get())
+        else:
+            self.autonomousDriving()
 
     def rightCallback(self, event):
         self.stopMotors()
@@ -456,7 +463,10 @@ class App:
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
-        self.spinRightMotors(self.rotationRate.get())
+        elif self.driveStyle.get() == 1:
+            self.spinRightMotors(self.rotationRate.get())
+        else:
+            self.autonomousDriving()
 
     def stopCallback(self, event):
         self.stopMotors()
@@ -483,14 +493,30 @@ class App:
         self.currentMotorState = self.motorStateStopped
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
+        
+    def setPowerPercentage(self, percent, gpio):
+        # Need to split subcycle into 200uS chunks to simulate 5KHz signal
+        pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) * int(percent) / 100
+        print 'Pulse width in incrs ', pulse_width_in_incrs
+        if pulse_width_in_incrs < 3:
+            print 'Clamping pulse width to 3'
+            pulse_width_in_incrs = 3
+        if pulse_width_in_incrs > (200 / self.pulseIncrementMicroseconds) - 1:
+            pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) - 1
+            print 'Clamping pulse width to ', pulse_width_in_incrs
+        for offset in range(0, self.subcycleWidthMicroseconds / self.pulseIncrementMicroseconds, 200 / self.pulseIncrementMicroseconds):
+            PWM.add_channel_pulse(self.motorDmaChannel, gpio, offset, pulse_width_in_incrs)       
 
     def forwardMotors(self, percent):
-        localPercent = percent
-        if localPercent == 100:
-            localPercent = 99
+        #localPercent = percent
+        #if localPercent == 100:
+        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
+        self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
+        
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateForward
@@ -498,12 +524,14 @@ class App:
         #print 'Released data lock ', self.lineno()
 
     def reverseMotors(self, percent):
-        localPercent = percent
-        if localPercent == 100:
-            localPercent = 99
+        #localPercent = percent
+        #if localPercent == 100:
+        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.setPowerPercentage(percent, self.leftMotorReverseGPIOChannel)
+        self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateReverse
@@ -511,12 +539,14 @@ class App:
         #print 'Released data lock ', self.lineno()
 
     def spinLeftMotors(self, percent):
-        localPercent = percent
-        if localPercent == 100:
-            localPercent = 99
+        #localPercent = percent
+        #if localPercent == 100:
+        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.setPowerPercentage(percent, self.leftMotorReverseGPIOChannel)
+        self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateSpinningLeft
@@ -524,12 +554,14 @@ class App:
         #print 'Released data lock ', self.lineno()
 
     def spinRightMotors(self, percent):
-        localPercent = percent
-        if localPercent == 100:
-            localPercent = 99
+        #localPercent = percent
+        #if localPercent == 100:
+        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
+        self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
+        self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
         self.currentMotorState = self.motorStateSpinningRight
@@ -594,6 +626,8 @@ class App:
 
     def obstacleSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
         print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
+        if self.driveStyle.get() == 3:
+            self.autonomousDriving()
 
     def leftObstacleSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
@@ -706,7 +740,28 @@ class App:
 
     def __del__(self):
         PWM.cleanup()
-
+        
+    def autonomousDriving(self):
+        # Autonomous driving using the obstacle sensors
+        self.stopMotors()
+        self.dataLock.acquire()
+        #print 'Got the data lock', self.lineno()
+        print 'Autonomous driving left OS ', self.leftObstacleSensorState, ' right OS ', self.rightObstacleSensorState
+        if self.leftObstacleSensorState and self.rightObstacleSensorState:
+            # All clear go forward
+            self.forwardMotors(self.driveSpeed.get())
+        elif not self.leftObstacleSensorState and self.rightObstacleSensorState:
+            # Obstruction on left go right
+            self.spinRightMotors(self.rotationRate.get())
+        elif self.leftObstacleSensorState and not self.rightObstacleSensorState:
+            # Obstruction on right go left
+            self.spinLeftMotors(self.rotationRate.get())
+        else:
+            # Obstruction in in front spin left
+            self.spinRightMotors(self.rotationRate.get())
+        self.dataLock.release()
+        #print 'Released data lock ', self.lineno()
+        
 print 'Initialising can take a few seconds - be patient!'
 root = Tk()
 
