@@ -243,26 +243,26 @@ class App:
         label = Label(obstacle, text="Left ")
         label.grid(row=0, column=0)
         self.leftObstacleState = StringVar()
-        label = Label(obstacle, textvariable=self.leftObstacleState)
-        label.grid(row=0, column=1)
+        self.leftObstacleLabel = Label(obstacle, textvariable=self.leftObstacleState)
+        self.leftObstacleLabel.grid(row=0, column=1)
         label = Label(obstacle, text="Right ")
         label.grid(row=0, column=2)
         self.rightObstacleState = StringVar()
-        label = Label(obstacle, textvariable=self.rightObstacleState)
-        label.grid(row=0, column=3)
+        self.rightObstacleLabel = Label(obstacle, textvariable=self.rightObstacleState)
+        self.rightObstacleLabel.grid(row=0, column=3)
 
         line = LabelFrame(master, text="Line sensors", padx=5, pady=5)
         line.grid(row=4, column=0, padx=10, pady=10)
         label = Label(line, text="Left ")
         label.grid(row=0, column=0)
         self.leftLineState = StringVar()
-        label = Label(line, textvariable=self.leftLineState)
-        label.grid(row=0, column=1)
+        self.leftLineLabel = Label(line, textvariable=self.leftLineState)
+        self.leftLineLabel.grid(row=0, column=1)
         label = Label(line, text="Right ")
         label.grid(row=0, column=2)
         self.rightLineState = StringVar()
-        label = Label(line, textvariable=self.rightLineState)
-        label.grid(row=0, column=3)
+        self.rightLineLabel = Label(line, textvariable=self.rightLineState)
+        self.rightLineLabel.grid(row=0, column=3)
 
         sonar = LabelFrame(master, text="Sonar", padx=5, pady=5)
         sonar.grid(row=0, column=1, rowspan=5, padx=10, pady=10)
@@ -297,6 +297,9 @@ class App:
         self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan) # Centre
         self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt) # Centre
 
+        # Set PWM logging
+        PWM.set_loglevel(PWM.LOG_LEVEL_ERRORS)
+
         # Set up the wheel sensors
         RPIO.setup(self.leftWheelSensorGPIOChannel, RPIO.IN)
         RPIO.add_interrupt_callback(self.leftWheelSensorGPIOChannel, self.leftWheelSensorCallback)
@@ -312,14 +315,18 @@ class App:
         RPIO.add_interrupt_callback(self.rightObstacleSensorGPIOChannel, self.rightObstacleSensorCallback)
         self.leftObstacleSensorState = RPIO.input(self.leftObstacleSensorGPIOChannel)
         if self.leftObstacleSensorState != RPIO.LOW:
-            self.leftObstacleState.set('True')
+            self.leftObstacleLabel.config(background='green')
+            self.leftObstacleState.set('High')
         else:
-            self.leftObstacleState.set('False')
+            self.leftObstacleLabel.config(background='red')
+            self.leftObstacleState.set('Low')
         self.rightObstacleSensorState = RPIO.input(self.rightObstacleSensorGPIOChannel)
         if self.rightObstacleSensorState != RPIO.LOW:
-            self.rightObstacleState.set('True')
+            self.rightObstacleLabel.config(background='green')
+            self.rightObstacleState.set('High')
         else:
-            self.rightObstacleState.set('False')
+            self.rightObstacleLabel.config(background='red')
+            self.rightObstacleState.set('Low')
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
@@ -334,15 +341,19 @@ class App:
         self.leftLineSensorState = RPIO.input(self.leftLineSensorGPIOChannel)
         #print 'LLSS ', self.leftLineSensorState
         if self.leftLineSensorState != RPIO.LOW:
-            self.leftLineState.set('True')
-        #else:
-            self.leftLineState.set('False')
+            self.leftLineLabel.config(background='green')
+            self.leftLineState.set('High')
+        else:
+            self.leftLineLabel.config(background='red')
+            self.leftLineState.set('Low')
         self.rightLineSensorState = RPIO.input(self.rightLineSensorGPIOChannel)
         #print 'RLSS ', self.rightLineSensorState
         if self.rightLineSensorState != RPIO.LOW:
-            self.rightLineState.set('True')
+            self.rightLineLabel.config(background='green')
+            self.rightLineState.set('High')
         else:
-            self.rightLineState.set('False')
+            self.rightLineLabel.config(background='red')
+            self.rightLineState.set('Low')
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
         
@@ -444,6 +455,7 @@ class App:
             self.dataLock.acquire()
             #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
+            self.forwardMotors(self.powerPercentage)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
         elif self.driveStyle.get() == 1:
@@ -461,6 +473,7 @@ class App:
             self.dataLock.acquire()
             #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
+            self.reverseMotors(self.powerPercentage)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
         elif self.driveStyle.get() == 1:
@@ -478,6 +491,7 @@ class App:
             self.dataLock.acquire()
             #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
+            self.spinLeftMotors(self.rotationPowerPercentage)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
         elif self.driveStyle.get() == 1:
@@ -495,6 +509,7 @@ class App:
             self.dataLock.acquire()
             #print 'Got the data lock', self.lineno()
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
+            self.spinRightMotors(self.rotationPowerPercentage)
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
         elif self.driveStyle.get() == 1:
@@ -511,13 +526,13 @@ class App:
 
     def stopMotors(self):
         sleeptime = self.subcycleWidthMicroseconds * 0.0000011 # Alllow some time for DMA to finish
-        print 'sleeptime ', sleeptime
         PWM.clear_channel(self.motorDmaChannel)
         time.sleep(sleeptime)
         RPIO.output(self.leftMotorForwardGPIOChannel, RPIO.LOW)
         RPIO.output(self.rightMotorForwardGPIOChannel, RPIO.LOW)
         RPIO.output(self.leftMotorReverseGPIOChannel, RPIO.LOW)
         RPIO.output(self.rightMotorReverseGPIOChannel, RPIO.LOW)
+        print 'Motors stopped'
         
     def setPowerPercentage(self, percent, gpio):
         # Need to split subcycle into 200uS chunks to simulate 5KHz signal
@@ -530,7 +545,17 @@ class App:
             pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) - 1
             print 'Clamping pulse width to ', pulse_width_in_incrs
         for offset in range(0, self.subcycleWidthMicroseconds / self.pulseIncrementMicroseconds, 200 / self.pulseIncrementMicroseconds):
-            PWM.add_channel_pulse(self.motorDmaChannel, gpio, offset, pulse_width_in_incrs)       
+            PWM.add_channel_pulse(self.motorDmaChannel, gpio, offset, pulse_width_in_incrs)
+        if gpio == self.leftMotorForwardGPIOChannel:
+            print 'Left forward ', percent
+        elif gpio == self.rightMotorForwardGPIOChannel:
+            print 'Right forward ', percent
+        elif gpio == self.leftMotorReverseGPIOChannel:
+            print 'Left reverse ', percent
+        elif gpio == self.rightMotorReverseGPIOChannel:
+            print 'Right reverse ', percent
+        else:     
+            print 'Unknown ', percent
 
     def forwardMotors(self, percent):
         #localPercent = percent
@@ -643,9 +668,11 @@ class App:
             self.leftObstacleSensorState = newvalue
             self.obstacleSensorStateChange(oldvalue, newvalue, self.rightObstacleSensorState, self.rightObstacleSensorState)
             if newvalue != RPIO.LOW:
-                self.leftObstacleState.set('True')
+                self.leftObstacleLabel.config(background='green')
+                self.leftObstacleState.set('High')
             else:
-                self.leftObstacleState.set('False')
+                self.leftObstacleLabel.config(background='red')
+                self.leftObstacleState.set('Low')
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
@@ -659,14 +686,17 @@ class App:
             self.rightObstacleSensorState = newvalue
             self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, newvalue)
             if newvalue != RPIO.LOW:
-               self.rightObstacleState.set('True')
+                self.rightObstacleLabel.config(background='green')
+                self.rightObstacleState.set('High')
             else:
-                self.rightObstacleState.set('False')
+                self.rightObstacleLabel.config(background='red')
+                self.rightObstacleState.set('Low')
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
     def lineSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
-        print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
+        #print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
+        return
 
     def leftLineSensorCallback(self, gpio_id, value):
         newvalue = bool(value)
@@ -678,9 +708,11 @@ class App:
             self.leftLineSensorState = newvalue
             self.lineSensorStateChange(oldvalue, newvalue, self.rightLineSensorState, self.rightLineSensorState)
             if newvalue != RPIO.LOW:
-                self.leftLineState.set('True')
+                self.leftLineLabel.config(background='green')
+                self.leftLineState.set('High')
             else:
-                self.leftLineState.set('False')
+                self.leftLineLabel.config(background='red')
+                self.leftLineState.set('Low')
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
@@ -694,9 +726,11 @@ class App:
             self.rightLineSensorState = newvalue
             self.lineSensorStateChange(self.leftLineSensorState, self.leftLineSensorState, oldvalue, newvalue)
             if newvalue != RPIO.LOW:
-                self.rightLineState.set('True')
+                self.rightLineLabel.config(background='green')
+                self.rightLineState.set('High')
             else:
-                self.rightLineState.set('False')
+                self.rightLineLabel.config(background='red')
+                self.rightLineState.set('Low')
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
@@ -752,17 +786,17 @@ class App:
         #print 'Got the data lock', self.lineno()
         print 'Autonomous driving left OS ', self.leftObstacleSensorState, ' right OS ', self.rightObstacleSensorState
         if self.leftObstacleSensorState and self.rightObstacleSensorState:
-            # All clear go forward
-            self.forwardMotors(self.driveSpeed.get())
+            print 'All clear go forward'
+            self.forwardMotors(self.powerPercentage)
         elif not self.leftObstacleSensorState and self.rightObstacleSensorState:
-            # Obstruction on left go right
-            self.spinRightMotors(self.rotationRate.get())
+            print 'Obstruction on left go right'
+            self.spinRightMotors(self.rotationPowerPercentage)
         elif self.leftObstacleSensorState and not self.rightObstacleSensorState:
-            # Obstruction on right go left
-            self.spinLeftMotors(self.rotationRate.get())
+            print 'Obstruction on right go left'
+            self.spinLeftMotors(self.rotationPowerPercentage)
         else:
-            # Obstruction in in front spin left
-            self.spinRightMotors(self.rotationRate.get())
+            print 'Obstruction in in front spin left'
+            self.spinRightMotors(self.rotationPowerPercentage)
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
         
