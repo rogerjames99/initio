@@ -9,7 +9,7 @@ from RPIO import PWM
 # Import matplotlib stuff
 import matplotlib
 matplotlib.use('TkAgg')
-from numpy import arange, sin, pi, random
+from numpy import arange, sin, pi, random, linspace
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
 from matplotlib.transforms import Affine2D
 from matplotlib.projections import PolarAxes
@@ -33,12 +33,13 @@ class App:
         
 
         # Some starting constants
-        self.servoIncrement = 100
+        self.thetaSamples = 50 # Number of theta samples
+        self.servoIncrement = 100 # Default amount to move the servo 
         self.wheelDiameter = 5.4 # cm
         self.ticksPer360 = 300 # Number of wheel pulses to turn 360 degrees
-        defaultDriveSpeed = 50 # %
+        defaultDriveSpeed = 90 # %
         self.defaultMinimumPowerPercentage = 40 # %
-        defaultRotationRate = 60 # %
+        defaultRotationRate = 100 # %
         defaultDriveDistance = 10 # cm
         defaultRotationAmount = 90 # degrees
         self.pulseIncrementMicroseconds = int()
@@ -61,7 +62,8 @@ class App:
         self.rightMotorForwardGPIOChannel = 8
         self.leftMotorReverseGPIOChannel = 9
         self.leftMotorForwardGPIOChannel = 10
-        self.sonarGPIOChannel = 14
+        #self.sonarGPIOChannel = 14 # Pirocon
+        self.sonarGPIOChannel = 11 # Robohat
         #self.rightObstacleSensorGPIOChannel = 17
         self.rightObstacleSensorGPIOChannel = 22
         self.leftLineSensorGPIOChannel = 18
@@ -108,16 +110,18 @@ class App:
         self.rightObstacleSensorState = RPIO.LOW
         self.leftLineSensorState = RPIO.LOW
         self.rightLineSensorState = RPIO.LOW
-        self.currentPan = 1500
-        self.currentTilt = 1500
+        self.currentPan = 1500 # centre
+        self.currentTilt = 1500 # centre
         self.powerPercentage = int()
         self.rotationPowerPercentage = int()
         
         # Sonar plot data
-        self.theta = [pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9]
+        #self.theta = [pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9]
+        self.theta = []
         self.radius = []
         self.panpos = []
-        for theta in self.theta:
+        for theta in linspace(pi*0.1, pi*0.9, self.thetaSamples):
+            self.theta.append(theta)
             self.radius.append(0.)
             self.panpos.append(500 + int((2000.0 * theta) / (pi * 10.0)) * 10)
             
@@ -199,7 +203,7 @@ class App:
         self.rotationRate = IntVar()
         self.rotationRate.set(defaultRotationRate)
         self.rotationRate.trace('w', self.rotationRateCallback)
-        spinbox = Spinbox(speedframe, from_=0, to=100, increment=10, textvariable=self.rotationRate)
+        spinbox = Spinbox(speedframe, from_=1, to=100, increment=1, textvariable=self.rotationRate)
         spinbox.grid(row=2, column=1)
         label = Label(speedframe, text="%")
         label.grid(row=2, column=2)
@@ -366,9 +370,8 @@ class App:
                 index = int(0)
                 for theta in self.theta:
                     # Pan the servo
-                    self.currentPan = self.panpos[index]
-                    self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
-                    time.sleep(1.0)
+                    self.Servos.set_servo(self.panServoGPIOChannel, self.panpos[index])
+                    time.sleep(0.5)
                     RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
                     # Send 10us pulse to trigger
                     RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
@@ -398,6 +401,7 @@ class App:
                     self.dataLock.release()
                     #print 'Released data lock ', self.lineno()
                     index = index + 1
+                self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
                 self.dataLock.acquire()
                 #print 'Got the data lock', self.lineno()
                 self.newSonarDataAvailable = True
@@ -418,6 +422,8 @@ class App:
     def idleCallback(self):
         global root
         plotit = False
+        theta = []
+        radius = []
         self.dataLock.acquire()
         if self.newSonarDataAvailable:
             plotit = True
@@ -425,9 +431,11 @@ class App:
             radius = self.radius
             selfNewSonarDataAvailable = False
         self.dataLock.release()
+        theta.append(0.)
+        radius.append(0.)
         if plotit:
             #print 'Plotting'
-            self.lines.set_data(self.theta, self.radius)
+            self.lines.set_data(theta, radius)
             self.canvas.draw()
     
     def driveSpeedCallback(self, a, b, c):
@@ -547,13 +555,13 @@ class App:
         for offset in range(0, self.subcycleWidthMicroseconds / self.pulseIncrementMicroseconds, 200 / self.pulseIncrementMicroseconds):
             PWM.add_channel_pulse(self.motorDmaChannel, gpio, offset, pulse_width_in_incrs)
         if gpio == self.leftMotorForwardGPIOChannel:
-            print 'Left forward ', percent
+            print 'Left forward ', percent, ' ', gpio
         elif gpio == self.rightMotorForwardGPIOChannel:
-            print 'Right forward ', percent
+            print 'Right forward ', percent, ' ', gpio
         elif gpio == self.leftMotorReverseGPIOChannel:
-            print 'Left reverse ', percent
+            print 'Left reverse ', percent, ' ', gpio
         elif gpio == self.rightMotorReverseGPIOChannel:
-            print 'Right reverse ', percent
+            print 'Right reverse ', percent, ' ', gpio
         else:     
             print 'Unknown ', percent
 
@@ -565,7 +573,7 @@ class App:
         #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
-        self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
+        #self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
 
     def reverseMotors(self, percent):
         #localPercent = percent
@@ -598,25 +606,25 @@ class App:
         self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
 
     def ptDownCallback(self, event):
-        self.currentTilt += 100
+        self.currentTilt += self.servoIncrement
         if self.currentTilt > 2500:
             self.currentTilt = 2500
         self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
 
     def ptUpCallback(self, event):
-        self.currentTilt -= 100
+        self.currentTilt -= self.servoIncrement
         if self.currentTilt < 500:
             self.currentTilt = 500
         self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
 
     def ptLeftCallback(self, event):
-        self.currentPan += 100
+        self.currentPan += self.servoIncrement
         if self.currentPan > 2500:
             self.currentPan = 2500
         self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
 
     def ptRightCallback(self, event):
-        self.currentPan -= 100
+        self.currentPan -= self.servoIncrement
         if self.currentPan < 500:
             self.currentPan = 500
         self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
