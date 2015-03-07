@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 
 import threading
+import pigpio
 import time
 import math
-import RPIO
-from RPIO import PWM
 
 # Import matplotlib stuff
 import matplotlib
@@ -31,7 +30,9 @@ class App:
 
     def __init__(self, master):
         
-
+        # Initialise pigpio
+        self.gpio = pigpio.pi()
+        
         # Some starting constants
         
         # It would be be to be able to auto detect the board type
@@ -50,8 +51,6 @@ class App:
         defaultRotationRate = 100 # %
         defaultDriveDistance = 10 # cm
         defaultRotationAmount = 90 # degrees
-        self.pulseIncrementMicroseconds = int()
-        self.subcycleWidthMicroseconds =  4000 # This is the lowest I can get to work on a rev 1 board
         self.motorStateStopped = 1
         self.motorStateForward = 2
         self.motorStateReverse = 3
@@ -73,7 +72,7 @@ class App:
             self.rightWheelSensorGPIOChannel = 23
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
-            if RPIO.RPI_REVISION == 1:
+            if self.gpio.get_hardware_revision() < 4:
                 self.rightLineSensorGPIOChannel = 21
             else:
                 self.rightLineSensorGPIOChannel = 27
@@ -95,7 +94,7 @@ class App:
             self.rightWheelSensorGPIOChannel = 17
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
-            if RPIO.RPI_REVISION == 1:
+            if self.gpio.get_hardware_revision() < 4:
                 self.rightLineSensorGPIOChannel = 21
             else:
                 self.rightLineSensorGPIOChannel = 27
@@ -116,9 +115,10 @@ class App:
             self.rightWheelSensorGPIOChannel = 17
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
-            if RPIO.RPI_REVISION == 1:
+            if self.gpio.get_hardware_revision() < 4:
                 self.rightLineSensorGPIOChannel = 21
             else:
+                print "Type 2 board detected"
                 self.rightLineSensorGPIOChannel = 27
         else:
             print 'Unknown board type', self.controllerBoardType 
@@ -135,7 +135,7 @@ class App:
         You need to add the channels used by this module to the kernel parameter that
         is used to initialise this mask.
         
-        To do this edit /boot/cmdline.txt and add dma.dmachans=0x7f05 to the end and reboot.
+        To do this edit /boot/cmdline.txt and add dma.dmachans=0x3f15 to the end and reboot.
         If a non default dma.dmachans parameter is already present you will have to work out what channels are free
         and modify the allocations below to match before editing the value there.
         You can check if this has worked by looking at /sys/module/dma/parameters/dmachans again.
@@ -146,23 +146,23 @@ class App:
         and is normally already in the default reserve list.
         """
         
-        self.motorDmaChannel = 4
-        self.servoDmaChannel = 5
+        # Default dma channels for pigpio
+        self.primaryDmaChannel = 14
+        self.secondaryDmaChannel = 5
 
         # Various state variables
         self.leftWheelCount = -1
         self.rightWheelCount = -1
-        self.leftObstacleSensorState = RPIO.LOW
-        self.rightObstacleSensorState = RPIO.LOW
-        self.leftLineSensorState = RPIO.LOW
-        self.rightLineSensorState = RPIO.LOW
+        self.leftObstacleSensorState = 0
+        self.rightObstacleSensorState = 0
+        self.leftLineSensorState = 0
+        self.rightLineSensorState = 0
         self.currentPan = 1500 # centre
         self.currentTilt = 1500 # centre
         self.powerPercentage = int()
         self.rotationPowerPercentage = int()
         
         # Sonar plot data
-        #self.theta = [pi*0.1, pi*0.2, pi*0.3, pi*0.4, pi*0.5, pi*0.6, pi*0.7, pi*0.8, pi*0.9]
         self.theta = []
         self.radius = []
         self.panpos = []
@@ -185,17 +185,13 @@ class App:
         try:
             dmamanager = open('/sys/module/dma/parameters/dmachans', mode='r')
             dmachans = int(dmamanager.readline())
-            if (dmachans & (1 << self.motorDmaChannel | 1 << self.servoDmaChannel)) != 0:
+            if (dmachans & (1 << self.primaryDmaChannel | 1 << self.secondaryDmaChannel)) != 0:
                 print 'Dma channels are not reserved please see code for help on what to do'
                 exit(-1)
             
         except IOError:
             print 'Cannot read dma manager please see code for help on what to do'
             exit(-1)
-        
-        # Kick off idle processing
-        # master.after_idle(self.idleCallback)
-
         
         # Thread for sonar scan
         pingThread = threading.Thread(target = self.pingThreadHandler)
@@ -331,47 +327,50 @@ class App:
         # Handle all GPIO interrupts in a separate thread so a not to block the GUI
         # TkInter says that all GUI updates should happen on the main thread. I do
         # not know if this applies to linked textvariables, they seem to work OK.
-        RPIO.wait_for_interrupts(threaded=True)
-
+        # TODO sort this out for pigpio
+        
         # Initialise the motor control
-        PWM.setup(delay_hw=PWM.DELAY_VIA_PCM) # RPIO PWM does not work on multiple dma channels when used with the DELAY_VIA_PWM timing source
-        self.pulseIncrementMicroseconds = PWM.get_pulse_incr_us()
-        RPIO.setup(self.leftMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
-        RPIO.setup(self.leftMotorReverseGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
-        RPIO.setup(self.rightMotorForwardGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
-        RPIO.setup(self.rightMotorReverseGPIOChannel, RPIO.OUT, initial=RPIO.LOW)
-        PWM.init_channel(self.motorDmaChannel, self.subcycleWidthMicroseconds)
+        self.gpio.set_mode(self.leftMotorForwardGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_mode(self.leftMotorReverseGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_mode(self.rightMotorForwardGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_mode(self.leftMotorForwardGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_PWM_range(self.leftMotorForwardGPIOChannel, 100)
+        self.gpio.set_PWM_range(self.leftMotorReverseGPIOChannel, 100)
+        self.gpio.set_PWM_range(self.rightMotorForwardGPIOChannel, 100)
+        self.gpio.set_PWM_range(self.leftMotorForwardGPIOChannel, 100)
+        self.gpio.set_PWM_dutycycle(self.leftMotorForwardGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.leftMotorReverseGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.rightMotorForwardGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.leftMotorForwardGPIOChannel, 0)
 
         # Initialise the servos
-        self.Servos = PWM.Servo(self.servoDmaChannel, 20000)
-        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan) # Centre
-        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt) # Centre
-
-        # Set PWM logging
-        PWM.set_loglevel(PWM.LOG_LEVEL_ERRORS)
+        self.gpio.set_mode(self.panServoGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_mode(self.panServoGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan) # Centre
+        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt) # Centre
 
         # Set up the wheel sensors
-        RPIO.setup(self.leftWheelSensorGPIOChannel, RPIO.IN)
-        RPIO.add_interrupt_callback(self.leftWheelSensorGPIOChannel, self.leftWheelSensorCallback)
-        RPIO.setup(self.rightWheelSensorGPIOChannel, RPIO.IN)
-        RPIO.add_interrupt_callback(self.rightWheelSensorGPIOChannel, self.rightWheelSensorCallback)
+        self.gpio.set_mode(self.leftWheelSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.callback(self.leftWheelSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftWheelSensorCallback)
+        self.gpio.set_mode(self.rightWheelSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.callback(self.rightWheelSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightWheelSensorCallback)
 
         # Set up obstacle sensors
         self.dataLock.acquire()
         #print 'Got the data lock ', self.lineno()
-        RPIO.setup(self.leftObstacleSensorGPIOChannel, RPIO.IN)
-        RPIO.add_interrupt_callback(self.leftObstacleSensorGPIOChannel, self.leftObstacleSensorCallback)
-        RPIO.setup(self.rightObstacleSensorGPIOChannel, RPIO.IN)
-        RPIO.add_interrupt_callback(self.rightObstacleSensorGPIOChannel, self.rightObstacleSensorCallback)
-        self.leftObstacleSensorState = RPIO.input(self.leftObstacleSensorGPIOChannel)
-        if self.leftObstacleSensorState != RPIO.LOW:
+        self.gpio.set_mode(self.leftObstacleSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.callback(self.leftObstacleSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftObstacleSensorCallback)
+        self.gpio.set_mode(self.rightObstacleSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.callback(self.rightObstacleSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightObstacleSensorCallback)
+        self.leftObstacleSensorState = self.gpio.read(self.leftObstacleSensorGPIOChannel)
+        if self.leftObstacleSensorState != 0:
             self.leftObstacleLabel.config(background='green')
             self.leftObstacleState.set('High')
         else:
             self.leftObstacleLabel.config(background='red')
             self.leftObstacleState.set('Low')
-        self.rightObstacleSensorState = RPIO.input(self.rightObstacleSensorGPIOChannel)
-        if self.rightObstacleSensorState != RPIO.LOW:
+        self.rightObstacleSensorState = self.gpio.read(self.rightObstacleSensorGPIOChannel)
+        if self.rightObstacleSensorState != 0:
             self.rightObstacleLabel.config(background='green')
             self.rightObstacleState.set('High')
         else:
@@ -383,22 +382,19 @@ class App:
         # Set up the line sensors
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
-        RPIO.setup(self.leftLineSensorGPIOChannel, RPIO.IN)
-        RPIO.add_interrupt_callback(self.leftLineSensorGPIOChannel, self.leftLineSensorCallback)
-        #print 'RLS ', self.rightLineSensorGPIOChannel
-        RPIO.setup(self.rightLineSensorGPIOChannel, RPIO.IN)
-        RPIO.add_interrupt_callback(self.rightLineSensorGPIOChannel, self.rightLineSensorCallback)
-        self.leftLineSensorState = RPIO.input(self.leftLineSensorGPIOChannel)
-        #print 'LLSS ', self.leftLineSensorState
-        if self.leftLineSensorState != RPIO.LOW:
+        self.gpio.set_mode(self.leftLineSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.callback(self.leftLineSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftLineSensorCallback)
+        self.gpio.set_mode(self.rightLineSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.callback(self.rightLineSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightLineSensorCallback)
+        self.leftLineSensorState = self.gpio.read(self.leftLineSensorGPIOChannel)
+        if self.leftLineSensorState != 0:
             self.leftLineLabel.config(background='green')
             self.leftLineState.set('High')
         else:
             self.leftLineLabel.config(background='red')
             self.leftLineState.set('Low')
-        self.rightLineSensorState = RPIO.input(self.rightLineSensorGPIOChannel)
-        #print 'RLSS ', self.rightLineSensorState
-        if self.rightLineSensorState != RPIO.LOW:
+        self.rightLineSensorState = self.gpio.read(self.rightLineSensorGPIOChannel)
+        if self.rightLineSensorState != 0:
             self.rightLineLabel.config(background='green')
             self.rightLineState.set('High')
         else:
@@ -416,22 +412,22 @@ class App:
                 index = int(0)
                 for theta in self.theta:
                     # Pan the servo
-                    self.Servos.set_servo(self.panServoGPIOChannel, self.panpos[index])
+                    self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.panpos[index])
                     time.sleep(0.5)
-                    RPIO.setup(self.sonarGPIOChannel, RPIO.OUT)
+                    self.gpio.set_mode(self.sonarGPIOChannel, pigpio.OUTPUT)
                     # Send 10us pulse to trigger
-                    RPIO.output(self.sonarGPIOChannel, RPIO.HIGH)
+                    self.gpio.write(self.sonarGPIOChannel, 1)
                     time.sleep(0.00001)
-                    RPIO.output(self.sonarGPIOChannel, RPIO.LOW)
+                    self.gpio.write(self.sonarGPIOChannel, 0)
                     #print 'sent pulse'
                     start = time.time()
                     count=time.time()
-                    RPIO.setup(self.sonarGPIOChannel, RPIO.IN)
-                    while RPIO.input(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
+                    self.gpio.set_mode(self.sonarGPIOChannel, pigpio.INPUT)
+                    while self.gpio.read(self.sonarGPIOChannel) == 0 and time.time() - count < 0.1:
                         start = time.time()
                     count = time.time()
                     stop = count
-                    while RPIO.input(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
+                    while self.gpio.read(self.sonarGPIOChannel) == 1 and time.time() - count <0.1:
                         stop = time.time()
                     # Calculate pulse length
                     elapsed = stop - start
@@ -447,7 +443,7 @@ class App:
                     self.dataLock.release()
                     #print 'Released data lock ', self.lineno()
                     index = index + 1
-                self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+                self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
                 self.dataLock.acquire()
                 #print 'Got the data lock', self.lineno()
                 self.newSonarDataAvailable = True
@@ -475,7 +471,9 @@ class App:
             radius = self.radius[:]
             selfNewSonarDataAvailable = False
         self.dataLock.release()
+        theta.insert(0, 0.)
         theta.append(0.)
+        radius.insert(0, 0.)
         radius.append(0.)
         if plotit:
             #print 'Plotting'
@@ -577,27 +575,14 @@ class App:
         self.stopMotors()
 
     def stopMotors(self):
-        sleeptime = self.subcycleWidthMicroseconds * 0.0000011 # Alllow some time for DMA to finish
-        PWM.clear_channel(self.motorDmaChannel)
-        time.sleep(sleeptime)
-        RPIO.output(self.leftMotorForwardGPIOChannel, RPIO.LOW)
-        RPIO.output(self.rightMotorForwardGPIOChannel, RPIO.LOW)
-        RPIO.output(self.leftMotorReverseGPIOChannel, RPIO.LOW)
-        RPIO.output(self.rightMotorReverseGPIOChannel, RPIO.LOW)
+        self.gpio.set_PWM_dutycycle(self.leftMotorForwardGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.rightMotorForwardGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.leftMotorReverseGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.rightMotorReverseGPIOChannel, 0)
         #print 'Motors stopped'
         
     def setPowerPercentage(self, percent, gpio):
-        # Need to split subcycle into 200uS chunks to simulate 5KHz signal
-        pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) * int(percent) / 100
-        #print 'Pulse width in incrs ', pulse_width_in_incrs
-        if pulse_width_in_incrs < 3:
-            #print 'Clamping pulse width to 3'
-            pulse_width_in_incrs = 3
-        if pulse_width_in_incrs > (200 / self.pulseIncrementMicroseconds) - 1:
-            pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) - 1
-            #print 'Clamping pulse width to ', pulse_width_in_incrs
-        for offset in range(0, self.subcycleWidthMicroseconds / self.pulseIncrementMicroseconds, 200 / self.pulseIncrementMicroseconds):
-            PWM.add_channel_pulse(self.motorDmaChannel, gpio, offset, pulse_width_in_incrs)
+        self.gpio.set_PWM_dutycycle(gpio, percent)
         if gpio == self.leftMotorForwardGPIOChannel:
             pass
             print 'Left forward ', percent, ' ', gpio
@@ -637,33 +622,33 @@ class App:
         self.currentTilt += self.servoIncrement
         if self.currentTilt > 2500:
             self.currentTilt = 2500
-        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
+        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt)
 
     def ptUpCallback(self, event):
         self.currentTilt -= self.servoIncrement
         if self.currentTilt < 500:
             self.currentTilt = 500
-        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
+        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt)
 
     def ptLeftCallback(self, event):
         self.currentPan += self.servoIncrement
         if self.currentPan > 2500:
             self.currentPan = 2500
-        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
 
     def ptRightCallback(self, event):
         self.currentPan -= self.servoIncrement
         if self.currentPan < 500:
             self.currentPan = 500
-        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
+        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
 
     def ptCentreCallback(self, event):
         self.currentPan = 1500
         self.currentTilt = 1500
-        self.Servos.set_servo(self.panServoGPIOChannel, self.currentPan)
-        self.Servos.set_servo(self.tiltServoGPIOChannel, self.currentTilt)
+        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
+        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt)
 
-    def leftWheelSensorCallback(self, gpio_id, value):
+    def leftWheelSensorCallback(self, gpio_id, value, tick):
         #print 'Left wheel sensor state change ', value
         if self.leftWheelCount > 0:
             self.dataLock.acquire()
@@ -676,7 +661,7 @@ class App:
             self.dataLock.release()
             #print 'Released data lock ', self.lineno()
 
-    def rightWheelSensorCallback(self, gpio_id, value):
+    def rightWheelSensorCallback(self, gpio_id, value, tick):
         #print 'Right wheel sensor state change ', value
         if self.rightWheelCount > 0:
             self.dataLock.acquire()
@@ -694,8 +679,8 @@ class App:
         if self.driveStyle.get() == 3:
             self.autonomousDriving()
 
-    def leftObstacleSensorCallback(self, gpio_id, value):
-        newvalue = bool(value)
+    def leftObstacleSensorCallback(self, gpio_id, value, tick):
+        newvalue = value
         #print 'Left obstacle sensor state change ', newvalue
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
@@ -703,7 +688,7 @@ class App:
         if oldvalue != newvalue:
             self.leftObstacleSensorState = newvalue
             self.obstacleSensorStateChange(oldvalue, newvalue, self.rightObstacleSensorState, self.rightObstacleSensorState)
-            if newvalue != RPIO.LOW:
+            if newvalue != 0:
                 self.leftObstacleLabel.config(background='green')
                 self.leftObstacleState.set('High')
             else:
@@ -712,8 +697,8 @@ class App:
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
-    def rightObstacleSensorCallback(self, gpio_id, value):
-        newvalue = bool(value)
+    def rightObstacleSensorCallback(self, gpio_id, value, tick):
+        newvalue = value
         #print 'Right obstacle sensor state change ', newvalue
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
@@ -721,7 +706,7 @@ class App:
         if oldvalue != newvalue:
             self.rightObstacleSensorState = newvalue
             self.obstacleSensorStateChange(self.leftObstacleSensorState, self.leftObstacleSensorState, oldvalue, newvalue)
-            if newvalue != RPIO.LOW:
+            if newvalue != 0:
                 self.rightObstacleLabel.config(background='green')
                 self.rightObstacleState.set('High')
             else:
@@ -734,8 +719,8 @@ class App:
         #print 'Line sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
         return
 
-    def leftLineSensorCallback(self, gpio_id, value):
-        newvalue = bool(value)
+    def leftLineSensorCallback(self, gpio_id, value, tick):
+        newvalue = value
         #print 'Left line sensor state change ', newvalue
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
@@ -743,7 +728,7 @@ class App:
         if oldvalue != newvalue:
             self.leftLineSensorState = newvalue
             self.lineSensorStateChange(oldvalue, newvalue, self.rightLineSensorState, self.rightLineSensorState)
-            if newvalue != RPIO.LOW:
+            if newvalue != 0:
                 self.leftLineLabel.config(background='green')
                 self.leftLineState.set('High')
             else:
@@ -752,8 +737,8 @@ class App:
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
 
-    def rightLineSensorCallback(self, gpio_id, value):
-        newvalue = bool(value)
+    def rightLineSensorCallback(self, gpio_id, value, tick):
+        newvalue = value
         #print 'Right line sensor state change ', newvalue
         self.dataLock.acquire()
         #print 'Got the data lock', self.lineno()
@@ -761,7 +746,7 @@ class App:
         if oldvalue != newvalue:
             self.rightLineSensorState = newvalue
             self.lineSensorStateChange(self.leftLineSensorState, self.leftLineSensorState, oldvalue, newvalue)
-            if newvalue != RPIO.LOW:
+            if newvalue != 0:
                 self.rightLineLabel.config(background='green')
                 self.rightLineState.set('High')
             else:
@@ -813,7 +798,7 @@ class App:
         return axis1, auxiliary_axis
 
     def __del__(self):
-        PWM.cleanup()
+        self.gpio.stop()
         
     def autonomousDriving(self):
         # Autonomous driving using the obstacle sensors
