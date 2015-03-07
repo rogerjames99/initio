@@ -33,6 +33,14 @@ class App:
         
 
         # Some starting constants
+        
+        # It would be be to be able to auto detect the board type
+        # But will need devicetree kernel for this
+        self.piroCon_v1_2 = 1
+        self.piroCon_v2_0 = 2
+        self.roboHat_v0_1 = 3
+        self.controllerBoardType = self.roboHat_v0_1
+        
         self.thetaSamples = 50 # Number of theta samples
         self.servoIncrement = 100 # Default amount to move the servo 
         self.wheelDiameter = 5.4 # cm
@@ -49,35 +57,73 @@ class App:
         self.motorStateReverse = 3
         self.motorStateSpinningLeft = 4
         self.motorStateSpinningRight = 5
-
-        # GPIO channels Broadcom numbering is used by default
-        # The commented out settings are the standard 4 tronix ones
-        # The current settings are for a Pirocon v2 with IBoost64 daughter board
-        # Note the reversal of GPIO channels 22 and 23 and the move swapping
-        # of channels for the wheel sensors and obstacle sensors to allow access
-        # to JP2 header pins #04 and #17 (wrongly labelled #07 on the board)
-        #self.leftObstacleSensorGPIOChannel = 4
-        self.leftObstacleSensorGPIOChannel = 23
-        self.rightMotorReverseGPIOChannel = 7
-        self.rightMotorForwardGPIOChannel = 8
-        self.leftMotorReverseGPIOChannel = 9
-        self.leftMotorForwardGPIOChannel = 10
-        #self.sonarGPIOChannel = 14 # Pirocon
-        self.sonarGPIOChannel = 11 # Robohat
-        #self.rightObstacleSensorGPIOChannel = 17
-        self.rightObstacleSensorGPIOChannel = 22
-        self.leftLineSensorGPIOChannel = 18
-        #self.leftWheelSensorGPIOChannel = 22
-        self.leftWheelSensorGPIOChannel = 4
-        #self.rightWheelSensorGPIOChannel = 23
-        self.rightWheelSensorGPIOChannel = 17
-        self.tiltServoGPIOChannel = 24
-        self.panServoGPIOChannel = 25
-        if RPIO.RPI_REVISION == 1:
-            self.rightLineSensorGPIOChannel = 21
+        
+        # Set up the GPIO channel constants
+        if self.controllerBoardType == self.piroCon_v1_2:
+            print 'Board type is PiroCon v1.2'
+            self.leftObstacleSensorGPIOChannel = 4
+            self.rightMotorReverseGPIOChannel = 7
+            self.rightMotorForwardGPIOChannel = 8
+            self.leftMotorReverseGPIOChannel = 9
+            self.leftMotorForwardGPIOChannel = 10
+            self.sonarGPIOChannel = 14
+            self.rightObstacleSensorGPIOChannel = 17
+            self.leftLineSensorGPIOChannel = 18
+            self.leftWheelSensorGPIOChannel = 22
+            self.rightWheelSensorGPIOChannel = 23
+            self.tiltServoGPIOChannel = 24
+            self.panServoGPIOChannel = 25
+            if RPIO.RPI_REVISION == 1:
+                self.rightLineSensorGPIOChannel = 21
+            else:
+                self.rightLineSensorGPIOChannel = 27
+        elif self.controllerBoardType == self.piroCon_v2_0:
+            print 'Board type is PiroCon v2.0'
+            # Settings are for a Pirocon v2 with IBoost64 daughter board
+            # Note the reversal of GPIO channels 22 and 23 and the swapping
+            # of the channels for the wheel sensors and obstacle sensors to allow access
+            # to JP2 header pins #04 and #17 (wrongly labelled #07 on the board)
+            self.leftObstacleSensorGPIOChannel = 23
+            self.rightMotorReverseGPIOChannel = 7
+            self.rightMotorForwardGPIOChannel = 8
+            self.leftMotorReverseGPIOChannel = 9
+            self.leftMotorForwardGPIOChannel = 10
+            self.sonarGPIOChannel = 14
+            self.rightObstacleSensorGPIOChannel = 22
+            self.leftLineSensorGPIOChannel = 18
+            self.leftWheelSensorGPIOChannel = 4
+            self.rightWheelSensorGPIOChannel = 17
+            self.tiltServoGPIOChannel = 24
+            self.panServoGPIOChannel = 25
+            if RPIO.RPI_REVISION == 1:
+                self.rightLineSensorGPIOChannel = 21
+            else:
+                self.rightLineSensorGPIOChannel = 27
+        elif self.controllerBoardType == self.roboHat_v0_1:
+            print 'Board type is RoboHat v0.1'
+            # Settings for RoboHat prototype V0.1
+            # Note the reversal of the motor channels and
+            # the use of the alternative sonar channel
+            self.leftObstacleSensorGPIOChannel = 23
+            self.leftMotorForwardGPIOChannel = 7
+            self.leftMotorReverseGPIOChannel = 8
+            self.rightMotorForwardGPIOChannel = 9
+            self.rightMotorReverseGPIOChannel = 10
+            self.sonarGPIOChannel = 11
+            self.rightObstacleSensorGPIOChannel = 22
+            self.leftLineSensorGPIOChannel = 18
+            self.leftWheelSensorGPIOChannel = 4
+            self.rightWheelSensorGPIOChannel = 17
+            self.tiltServoGPIOChannel = 24
+            self.panServoGPIOChannel = 25
+            if RPIO.RPI_REVISION == 1:
+                self.rightLineSensorGPIOChannel = 21
+            else:
+                self.rightLineSensorGPIOChannel = 27
         else:
-            self.rightLineSensorGPIOChannel = 27
-
+            print 'Unknown board type', self.controllerBoardType 
+            exit(-1)
+            
         """
         DMA channels (engines) used by this module
         ==========================================
@@ -422,13 +468,11 @@ class App:
     def idleCallback(self):
         global root
         plotit = False
-        theta = []
-        radius = []
         self.dataLock.acquire()
         if self.newSonarDataAvailable:
             plotit = True
-            theta = self.theta
-            radius = self.radius
+            theta = self.theta[:]
+            radius = self.radius[:]
             selfNewSonarDataAvailable = False
         self.dataLock.release()
         theta.append(0.)
@@ -444,7 +488,7 @@ class App:
         self.powerPercentage = self.driveSpeedToPowerPercentage(self.driveSpeed.get())
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
-        print 'driveSpeedCallback ', self.powerPercentage
+        #print 'driveSpeedCallback ', self.powerPercentage
         
     def rotationRateCallback(self, a, b, c):
         self.dataLock.acquire()
@@ -452,7 +496,7 @@ class App:
         self.rotationPowerPercentage = self.driveSpeedToPowerPercentage(self.rotationRate.get())
         self.dataLock.release()
         #print 'Released data lock ', self.lineno()
-        print 'rotationRateCallback ', self.rotationPowerPercentage
+        #print 'rotationRateCallback ', self.rotationPowerPercentage
         
     def driveSpeedToPowerPercentage(self, driveSpeed):
         return self.defaultMinimumPowerPercentage + (100 - self.defaultMinimumPowerPercentage) * driveSpeed / 100
@@ -540,68 +584,52 @@ class App:
         RPIO.output(self.rightMotorForwardGPIOChannel, RPIO.LOW)
         RPIO.output(self.leftMotorReverseGPIOChannel, RPIO.LOW)
         RPIO.output(self.rightMotorReverseGPIOChannel, RPIO.LOW)
-        print 'Motors stopped'
+        #print 'Motors stopped'
         
     def setPowerPercentage(self, percent, gpio):
         # Need to split subcycle into 200uS chunks to simulate 5KHz signal
         pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) * int(percent) / 100
-        print 'Pulse width in incrs ', pulse_width_in_incrs
+        #print 'Pulse width in incrs ', pulse_width_in_incrs
         if pulse_width_in_incrs < 3:
-            print 'Clamping pulse width to 3'
+            #print 'Clamping pulse width to 3'
             pulse_width_in_incrs = 3
         if pulse_width_in_incrs > (200 / self.pulseIncrementMicroseconds) - 1:
             pulse_width_in_incrs = (200 / self.pulseIncrementMicroseconds) - 1
-            print 'Clamping pulse width to ', pulse_width_in_incrs
+            #print 'Clamping pulse width to ', pulse_width_in_incrs
         for offset in range(0, self.subcycleWidthMicroseconds / self.pulseIncrementMicroseconds, 200 / self.pulseIncrementMicroseconds):
             PWM.add_channel_pulse(self.motorDmaChannel, gpio, offset, pulse_width_in_incrs)
         if gpio == self.leftMotorForwardGPIOChannel:
+            pass
             print 'Left forward ', percent, ' ', gpio
         elif gpio == self.rightMotorForwardGPIOChannel:
+            pass
             print 'Right forward ', percent, ' ', gpio
         elif gpio == self.leftMotorReverseGPIOChannel:
+            pass
             print 'Left reverse ', percent, ' ', gpio
         elif gpio == self.rightMotorReverseGPIOChannel:
+            pass
             print 'Right reverse ', percent, ' ', gpio
         else:     
             print 'Unknown ', percent
 
     def forwardMotors(self, percent):
-        #localPercent = percent
-        #if localPercent == 100:
-        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
-        #self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
+        self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
 
     def reverseMotors(self, percent):
-        #localPercent = percent
-        #if localPercent == 100:
-        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.setPowerPercentage(percent, self.leftMotorReverseGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
 
     def spinLeftMotors(self, percent):
-        #localPercent = percent
-        #if localPercent == 100:
-        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.setPowerPercentage(percent, self.leftMotorReverseGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
 
     def spinRightMotors(self, percent):
-        #localPercent = percent
-        #if localPercent == 100:
-        #    localPercent = 99
         self.stopMotors() # Ensure consistent state
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.leftMotorForwardGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
-        #PWM.add_channel_pulse(self.motorDmaChannel, self.rightMotorReverseGPIOChannel, 0, localPercent * self.pulseIncrementsPercent)
         self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
 
@@ -662,7 +690,7 @@ class App:
             #print 'Released data lock ', self.lineno()
 
     def obstacleSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
-        print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
+        #print 'Obstacle sensor state change', oldLeft, ' ', newLeft, ' ', oldRight, ' ', newRight
         if self.driveStyle.get() == 3:
             self.autonomousDriving()
 
