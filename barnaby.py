@@ -194,8 +194,8 @@ class App:
                 exit(-1)
             
         except IOError:
-            print 'Cannot read dma manager please see code for help on what to do'
-            exit(-1)
+            print 'Cannot read dma manager so cannot check DMA reservations'
+            print 'Probably not running on a pi - continuing anyway'
         
         # Thread for sonar scan
         pingThread = threading.Thread(target = self.pingThreadHandler)
