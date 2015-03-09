@@ -124,16 +124,16 @@ class App:
             # Settings for RoboHat prototype V0.1
             # Note the reversal of the motor channels and
             # the use of the alternative sonar channel
-            self.leftObstacleSensorGPIOChannel = 23
+            self.leftWheelSensorGPIOChannel = 4
             self.leftMotorForwardGPIOChannel = 7
             self.leftMotorReverseGPIOChannel = 8
             self.rightMotorForwardGPIOChannel = 9
             self.rightMotorReverseGPIOChannel = 10
             self.sonarGPIOChannel = 11
-            self.rightObstacleSensorGPIOChannel = 22
-            self.leftLineSensorGPIOChannel = 18
-            self.leftWheelSensorGPIOChannel = 4
             self.rightWheelSensorGPIOChannel = 17
+            self.leftLineSensorGPIOChannel = 18
+            self.leftObstacleSensorGPIOChannel = 22
+            self.rightObstacleSensorGPIOChannel = 23
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
             if self.gpio_hardware_revision < 4:
