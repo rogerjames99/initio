@@ -23,13 +23,7 @@ from matplotlib.figure import Figure
 
 from Tkinter import *
 
-import inspect
-
 class App:
-
-    def lineno(this):
-        """Returns the current line number in our program."""
-        return inspect.currentframe().f_back.f_lineno
 
     def __init__(self, master):
         # Process command line options
@@ -40,7 +34,8 @@ class App:
             self.hostname = args_proper[0]
         
         # Initialise logging
-        logging.basicConfig(filename='barnaby.log', level=logging.DEBUG, filemode='w', format='%(funcName)s %(lineno)d %(levelname)s:%(message)s')
+        logging.basicConfig(filename='barnaby.log', level=logging.DEBUG, filemode='w', \
+                             format='%(thread)x %(funcName)s %(lineno)d %(levelname)s:%(message)s')
         
         # Initialise pigpio
         pigpio.exceptions = False
@@ -337,7 +332,7 @@ class App:
         sonar.grid(row=0, column=1, rowspan=5, padx=10, pady=10)
 
         figure = Figure(figsize=(5,4), dpi=100)
-        axis, self.auxiliary_axis = self.setup_axes(figure, 111)
+        self.setup_axes(figure, 111)
         self.canvas = FigureCanvasTkAgg(figure, master=sonar)
         self.canvas.show()
         self.canvas.get_tk_widget().grid(row=0, column=0)
@@ -356,15 +351,15 @@ class App:
         self.gpio.set_mode(self.leftMotorForwardGPIOChannel, pigpio.OUTPUT)
         self.gpio.set_mode(self.leftMotorReverseGPIOChannel, pigpio.OUTPUT)
         self.gpio.set_mode(self.rightMotorForwardGPIOChannel, pigpio.OUTPUT)
-        self.gpio.set_mode(self.leftMotorForwardGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_mode(self.rightMotorReverseGPIOChannel, pigpio.OUTPUT)
         self.gpio.set_PWM_range(self.leftMotorForwardGPIOChannel, 100)
         self.gpio.set_PWM_range(self.leftMotorReverseGPIOChannel, 100)
         self.gpio.set_PWM_range(self.rightMotorForwardGPIOChannel, 100)
-        self.gpio.set_PWM_range(self.leftMotorForwardGPIOChannel, 100)
+        self.gpio.set_PWM_range(self.rightMotorReverseGPIOChannel, 100)
         self.gpio.set_PWM_dutycycle(self.leftMotorForwardGPIOChannel, 0)
         self.gpio.set_PWM_dutycycle(self.leftMotorReverseGPIOChannel, 0)
         self.gpio.set_PWM_dutycycle(self.rightMotorForwardGPIOChannel, 0)
-        self.gpio.set_PWM_dutycycle(self.leftMotorForwardGPIOChannel, 0)
+        self.gpio.set_PWM_dutycycle(self.rightMotorReverseGPIOChannel, 0)
 
         # Initialise the servos
         self.gpio.set_mode(self.panServoGPIOChannel, pigpio.OUTPUT)
@@ -374,8 +369,10 @@ class App:
 
         # Set up the wheel sensors
         self.gpio.set_mode(self.leftWheelSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.set_pull_up_down(self.leftWheelSensorGPIOChannel, pigpio.PUD_DOWN)
         self.gpio.callback(self.leftWheelSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftWheelSensorCallback)
         self.gpio.set_mode(self.rightWheelSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.set_pull_up_down(self.rightWheelSensorGPIOChannel, pigpio.PUD_DOWN)
         self.gpio.callback(self.rightWheelSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightWheelSensorCallback)
 
         # Set up obstacle sensors
@@ -383,8 +380,10 @@ class App:
         self.dataLock.acquire()
         logging.info('Got the data lock')
         self.gpio.set_mode(self.leftObstacleSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.set_pull_up_down(self.leftObstacleSensorGPIOChannel, pigpio.PUD_DOWN)
         self.gpio.callback(self.leftObstacleSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftObstacleSensorCallback)
         self.gpio.set_mode(self.rightObstacleSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.set_pull_up_down(self.rightObstacleSensorGPIOChannel, pigpio.PUD_DOWN)
         self.gpio.callback(self.rightObstacleSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightObstacleSensorCallback)
         self.leftObstacleSensorState = self.gpio.read(self.leftObstacleSensorGPIOChannel)
         if self.leftObstacleSensorState != 0:
@@ -408,8 +407,10 @@ class App:
         self.dataLock.acquire()
         logging.info('Got the data lock')
         self.gpio.set_mode(self.leftLineSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.set_pull_up_down(self.leftLineSensorGPIOChannel, pigpio.PUD_DOWN)
         self.gpio.callback(self.leftLineSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftLineSensorCallback)
         self.gpio.set_mode(self.rightLineSensorGPIOChannel, pigpio.INPUT)
+        self.gpio.set_pull_up_down(self.rightLineSensorGPIOChannel, pigpio.PUD_DOWN)
         self.gpio.callback(self.rightLineSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightLineSensorCallback)
         self.leftLineSensorState = self.gpio.read(self.leftLineSensorGPIOChannel)
         if self.leftLineSensorState != 0:
@@ -527,7 +528,6 @@ class App:
         logging.info('rotationRateCallback %d', self.rotationPowerPercentage)
         
     def forwardCallback(self, event):
-        self.stopMotors()
         if self.driveStyle.get() == 2:
             logging.info('Acquire the data lock')
             self.dataLock.acquire()
@@ -537,6 +537,7 @@ class App:
             self.dataLock.release()
             logging.info('Released the data lock')
         elif self.driveStyle.get() == 1:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.forwardMotors(self.powerPercentage)
@@ -546,7 +547,6 @@ class App:
             self.autonomousDriving()
 
     def backCallback(self, event):
-        self.stopMotors()
         if self.driveStyle.get() == 2:
             logging.info('Acquire the data lock')
             self.dataLock.acquire()
@@ -566,7 +566,6 @@ class App:
             self.autonomousDriving()
 
     def leftCallback(self, event):
-        self.stopMotors()
         if self.driveStyle.get() == 2:
             logging.info('Acquire the data lock')
             self.dataLock.acquire()
@@ -586,7 +585,6 @@ class App:
             self.autonomousDriving()
 
     def rightCallback(self, event):
-        self.stopMotors()
         if self.driveStyle.get() == 2:
             logging.info('Acquire the data lock')
             self.dataLock.acquire()
@@ -633,23 +631,27 @@ class App:
             logging.info('Unknown %d', percent)
 
     def forwardMotors(self, percent):
-        self.stopMotors() # Ensure consistent state
         self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
+        self.setPowerPercentage(0, self.leftMotorReverseGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
+        self.setPowerPercentage(0, self.rightMotorReverseGPIOChannel)
 
     def reverseMotors(self, percent):
-        self.stopMotors() # Ensure consistent state
+        self.setPowerPercentage(0, self.leftMotorForwardGPIOChannel)
         self.setPowerPercentage(percent, self.leftMotorReverseGPIOChannel)
+        self.setPowerPercentage(0, self.rightMotorForwardGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
 
     def spinLeftMotors(self, percent):
-        self.stopMotors() # Ensure consistent state
+        self.setPowerPercentage(0, self.leftMotorForwardGPIOChannel)
         self.setPowerPercentage(percent, self.leftMotorReverseGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorForwardGPIOChannel)
+        self.setPowerPercentage(0, self.rightMotorReverseGPIOChannel)
 
     def spinRightMotors(self, percent):
-        self.stopMotors() # Ensure consistent state
         self.setPowerPercentage(percent, self.leftMotorForwardGPIOChannel)
+        self.setPowerPercentage(0, self.leftMotorReverseGPIOChannel)
+        self.setPowerPercentage(0, self.rightMotorForwardGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
 
     def ptDownCallback(self, event):
@@ -810,7 +812,7 @@ class App:
 
         grid_locator2 = MaxNLocator(4)
 
-        grid_helper = floating_axes.GridHelperCurveLinear(transform,
+        self.grid_helper = floating_axes.GridHelperCurveLinear(transform,
                                             extremes=(0, pi, 100, 0),
                                             grid_locator1=grid_locator1,
                                             grid_locator2=grid_locator2,
@@ -818,7 +820,7 @@ class App:
                                             tick_formatter2=None,
                                             )
 
-        axis1 = floating_axes.FloatingSubplot(fig, rect, grid_helper=grid_helper)
+        axis1 = floating_axes.FloatingSubplot(fig, rect, grid_helper=self.grid_helper)
         axis1.axis["bottom"].major_ticklabels.set_rotation(180)
         axis1.axis["left"].set_axis_direction("bottom")
         axis1.grid(b=True, which='major', color='b', linestyle='-')
@@ -834,7 +836,6 @@ class App:
                             # prevent this.
 
         self.lines, = auxiliary_axis.plot(self.theta, self.radius)
-        return axis1, auxiliary_axis
 
     def __del__(self):
         self.gpio.stop()
