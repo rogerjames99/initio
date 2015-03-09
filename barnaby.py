@@ -5,6 +5,8 @@ import pigpio
 import time
 import math
 import logging
+import sys
+import getopt
 
 # Import matplotlib stuff
 import matplotlib
@@ -30,12 +32,28 @@ class App:
         return inspect.currentframe().f_back.f_lineno
 
     def __init__(self, master):
+        # Process command line options
+        opts, args_proper = getopt.getopt(sys.argv[1:], '')
+        
+        self.hostname = 'localhost'
+        if args_proper.__len__() > 0:
+            self.hostname = args_proper[0]
         
         # Initialise logging
-        logging.basicConfig(filename='barnaby.log', level=logging.DEBUG, filemode='w', format='%(lineno)d %(levelname)s:%(message)s')
+        logging.basicConfig(filename='barnaby.log', level=logging.DEBUG, filemode='w', format='%(funcName)s %(lineno)d %(levelname)s:%(message)s')
         
         # Initialise pigpio
-        self.gpio = pigpio.pi()
+        pigpio.exceptions = False
+        print 'pigpiod host', self.hostname
+        try:
+            self.gpio = pigpio.pi(self.hostname)
+            self.gpio_hardware_revision = self.gpio.get_hardware_revision()
+        except:
+            print 'Failed to intialise pigpio'
+            print 'Are you running on a pi?'
+            print 'If not then you can supply a hostname to connect to as a parameter'
+            exit(-1)
+        pigpio.exceptions = True
         
         # Some starting constants
         
@@ -50,8 +68,7 @@ class App:
         self.servoIncrement = 100 # Default amount to move the servo 
         self.wheelDiameter = 5.4 # cm
         self.ticksPer360 = 300 # Number of wheel pulses to turn 360 degrees
-        defaultDriveSpeed = 90 # %
-        self.defaultMinimumPowerPercentage = 40 # %
+        defaultDriveSpeed = 100 # %
         defaultRotationRate = 100 # %
         defaultDriveDistance = 10 # cm
         defaultRotationAmount = 90 # degrees
@@ -76,7 +93,7 @@ class App:
             self.rightWheelSensorGPIOChannel = 23
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
-            if self.gpio.get_hardware_revision() < 4:
+            if self.gpio_hardware_revision < 4:
                 self.rightLineSensorGPIOChannel = 21
             else:
                 self.rightLineSensorGPIOChannel = 27
@@ -98,7 +115,7 @@ class App:
             self.rightWheelSensorGPIOChannel = 17
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
-            if self.gpio.get_hardware_revision() < 4:
+            if self.gpio_hardware_revision < 4:
                 self.rightLineSensorGPIOChannel = 21
             else:
                 self.rightLineSensorGPIOChannel = 27
@@ -119,7 +136,7 @@ class App:
             self.rightWheelSensorGPIOChannel = 17
             self.tiltServoGPIOChannel = 24
             self.panServoGPIOChannel = 25
-            if self.gpio.get_hardware_revision() < 4:
+            if self.gpio_hardware_revision < 4:
                 self.rightLineSensorGPIOChannel = 21
             else:
                 logging.info("Type 2 board detected")
@@ -186,16 +203,18 @@ class App:
         self.newSonarDataAvailable = False
         
         # Check if the dma channels are correctly reserved
-        try:
-            dmamanager = open('/sys/module/dma/parameters/dmachans', mode='r')
-            dmachans = int(dmamanager.readline())
-            if (dmachans & (1 << self.primaryDmaChannel | 1 << self.secondaryDmaChannel)) != 0:
-                print 'Dma channels are not reserved please see code for help on what to do'
+        if self.hostname == 'localhost':
+            try:
+                dmamanager = open('/sys/module/dma/parameters/dmachans', mode='r')
+                dmachans = int(dmamanager.readline())
+                if (dmachans & (1 << self.primaryDmaChannel | 1 << self.secondaryDmaChannel)) != 0:
+                    print 'Dma channels are not reserved please see code for help on what to do'
+                    exit(-1)
+                
+            except IOError:
+                print 'Cannot read dma manager so cannot check DMA reservations'
+                print 'Probably not running on a pi'
                 exit(-1)
-            
-        except IOError:
-            print 'Cannot read dma manager so cannot check DMA reservations'
-            print 'Probably not running on a pi - continuing anyway'
         
         # Thread for sonar scan
         pingThread = threading.Thread(target = self.pingThreadHandler)
@@ -360,8 +379,9 @@ class App:
         self.gpio.callback(self.rightWheelSensorGPIOChannel, pigpio.EITHER_EDGE, self.rightWheelSensorCallback)
 
         # Set up obstacle sensors
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
-        logging.info('Got the data lock ')
+        logging.info('Got the data lock')
         self.gpio.set_mode(self.leftObstacleSensorGPIOChannel, pigpio.INPUT)
         self.gpio.callback(self.leftObstacleSensorGPIOChannel, pigpio.EITHER_EDGE, self.leftObstacleSensorCallback)
         self.gpio.set_mode(self.rightObstacleSensorGPIOChannel, pigpio.INPUT)
@@ -381,9 +401,10 @@ class App:
             self.rightObstacleLabel.config(background='red')
             self.rightObstacleState.set('Low')
         self.dataLock.release()
-        logging.info('Released data lock ')
+        logging.info('Released data lock')
 
         # Set up the line sensors
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
         self.gpio.set_mode(self.leftLineSensorGPIOChannel, pigpio.INPUT)
@@ -405,7 +426,7 @@ class App:
             self.rightLineLabel.config(background='red')
             self.rightLineState.set('Low')
         self.dataLock.release()
-        logging.info('Released data lock ')
+        logging.info('Released data lock')
         
     def pingThreadHandler(self):
         global root
@@ -441,6 +462,7 @@ class App:
                     # That was the distance there and back so halve the value
                     distance = int(elapsed * 34000) / 2
                     logging.info('distance %d', distance)
+                    logging.info('Acquire the data lock')
                     self.dataLock.acquire()
                     logging.info('Got the data lock')
                     self.radius[index] = distance             
@@ -448,6 +470,7 @@ class App:
                     logging.info('Released data lock')
                     index = index + 1
                 self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
+                logging.info('Acquire the data lock')
                 self.dataLock.acquire()
                 logging.info('Got the data lock')
                 self.newSonarDataAvailable = True
@@ -468,6 +491,7 @@ class App:
     def idleCallback(self):
         global root
         plotit = False
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         if self.newSonarDataAvailable:
             plotit = True
@@ -485,93 +509,99 @@ class App:
             self.canvas.draw()
     
     def driveSpeedCallback(self, a, b, c):
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
-        self.powerPercentage = self.driveSpeedToPowerPercentage(self.driveSpeed.get())
+        self.powerPercentage = self.driveSpeed.get()
         self.dataLock.release()
-        logging.info('Released the data lock ')
+        logging.info('Released the data lock')
         logging.info('driveSpeedCallback %d', self.powerPercentage)
         
     def rotationRateCallback(self, a, b, c):
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
-        self.rotationPowerPercentage = self.driveSpeedToPowerPercentage(self.rotationRate.get())
+        self.rotationPowerPercentage = self.rotationRate.get()
         self.dataLock.release()
         logging.info('Released the data lock')
         logging.info('rotationRateCallback %d', self.rotationPowerPercentage)
         
-    def driveSpeedToPowerPercentage(self, driveSpeed):
-        return self.defaultMinimumPowerPercentage + (100 - self.defaultMinimumPowerPercentage) * driveSpeed / 100
-        
     def forwardCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
             self.forwardMotors(self.powerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         elif self.driveStyle.get() == 1:
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.forwardMotors(self.powerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         else:
             self.autonomousDriving()
 
     def backCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.leftWheelCount = int(self.driveDistance.get() / (self.wheelDiameter * math.pi) * 18.0)
             self.reverseMotors(self.powerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         elif self.driveStyle.get() == 1:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.reverseMotors(self.powerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         else:
             self.autonomousDriving()
 
     def leftCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.spinLeftMotors(self.rotationPowerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         elif self.driveStyle.get() == 1:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.spinLeftMotors(self.rotationPowerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         else:
             self.autonomousDriving()
 
     def rightCallback(self, event):
         self.stopMotors()
         if self.driveStyle.get() == 2:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.leftWheelCount = int(self.ticksPer360 * self.rotationAmount.get() / 360.0)
             self.spinRightMotors(self.rotationPowerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         elif self.driveStyle.get() == 1:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.spinRightMotors(self.rotationPowerPercentage)
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
         else:
             self.autonomousDriving()
 
@@ -655,6 +685,7 @@ class App:
     def leftWheelSensorCallback(self, gpio_id, value, tick):
         logging.info('Left wheel sensor state change %d', value)
         if self.leftWheelCount > 0:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.leftWheelCount = self.leftWheelCount - 1
@@ -663,11 +694,12 @@ class App:
                 self.leftWheelCount = -1
                 self.rightWheelCount = -1
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
 
     def rightWheelSensorCallback(self, gpio_id, value, tick):
         logging.info('Right wheel sensor state change %d', value)
         if self.rightWheelCount > 0:
+            logging.info('Acquire the data lock')
             self.dataLock.acquire()
             logging.info('Got the data lock')
             self.rightWheelCount = self.rightWheelCount - 1
@@ -676,7 +708,7 @@ class App:
                 self.leftWheelCount = -1
                 self.rightWheelCount = -1
             self.dataLock.release()
-            logging.info('Released the data lock ')
+            logging.info('Released the data lock')
 
     def obstacleSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
         logging.info('Obstacle sensor state change old left %d new left %d old right %d new right %d', oldLeft, newLeft, oldRight, newRight)
@@ -699,11 +731,12 @@ class App:
                 self.leftObstacleLabel.config(background='red')
                 self.leftObstacleState.set('Low')
         self.dataLock.release()
-        logging.info('Released the data lock ')
+        logging.info('Released the data lock')
 
     def rightObstacleSensorCallback(self, gpio_id, value, tick):
         newvalue = value
         logging.info('Right obstacle sensor state change %d', newvalue)
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
         oldvalue = self.rightObstacleSensorState
@@ -717,7 +750,7 @@ class App:
                 self.rightObstacleLabel.config(background='red')
                 self.rightObstacleState.set('Low')
         self.dataLock.release()
-        logging.info('Released the data lock ')
+        logging.info('Released the data lock')
 
     def lineSensorStateChange(self, oldLeft, newLeft, oldRight, newRight):
         logging.info('Line sensor state change old Left %d new Left %d old Right %d new Right %d', oldLeft, newLeft, oldRight, newRight)
@@ -726,6 +759,7 @@ class App:
     def leftLineSensorCallback(self, gpio_id, value, tick):
         newvalue = value
         logging.info('Left line sensor state change %d', newvalue)
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
         oldvalue = self.leftLineSensorState
@@ -739,11 +773,12 @@ class App:
                 self.leftLineLabel.config(background='red')
                 self.leftLineState.set('Low')
         self.dataLock.release()
-        logging.info('Released the data lock ')
+        logging.info('Released the data lock')
 
     def rightLineSensorCallback(self, gpio_id, value, tick):
         newvalue = value
         logging.info('Right line sensor state change %d', newvalue)
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
         oldvalue = self.rightLineSensorState
@@ -757,7 +792,7 @@ class App:
                 self.rightLineLabel.config(background='red')
                 self.rightLineState.set('Low')
         self.dataLock.release()
-        logging.info('Released the data lock ')
+        logging.info('Released the data lock')
 
     def setup_axes(self, fig, rect):
         """
@@ -807,6 +842,7 @@ class App:
     def autonomousDriving(self):
         # Autonomous driving using the obstacle sensors
         self.stopMotors()
+        logging.info('Acquire the data lock')
         self.dataLock.acquire()
         logging.info('Got the data lock')
         logging.info('Autonomous driving left OS %d right OS %d', self.leftObstacleSensorState, self.rightObstacleSensorState)
@@ -823,7 +859,7 @@ class App:
             logging.info('Obstruction in in front spin left')
             self.spinRightMotors(self.rotationPowerPercentage)
         self.dataLock.release()
-        logging.info('Released the data lock ')
+        logging.info('Released the data lock')
         
 print 'Initialising can take a few seconds - be patient!'
 root = Tk()
