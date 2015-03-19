@@ -34,7 +34,7 @@ class App(object):
             self.hostname = args_proper[0]
         
         # Initialise logging
-        logging.basicConfig(filename='barnaby.log', level=logging.INFO, filemode='w', \
+        logging.basicConfig(filename='barnaby.log', level=logging.DEBUG, filemode='w', \
                              format='%(thread)x %(funcName)s %(lineno)d %(levelname)s:%(message)s')
         
         # Initialise pigpio
@@ -447,47 +447,48 @@ class App(object):
         logging.debug('Released data lock')
                 
     def sonarCallback(self, g, l, t):
-        print("gpio={} level={} tick={}".format(g, l, t))
+        logging.debug('gpio = %d level %d = tick = %d', g, l, t)
+        logging.debug('Acquire the data lock')
         self.dataLock.acquire()
         logging.debug('Got the data lock')
         if self.sonar_state == 0: # waiting for trigger start
             if l == 1:
                 self.sonar_state = 2 # waiting for trigger end
-                print 'Moving to waiting for trigger end'
+                logging.debug('Moving to waiting for trigger end')
             else:
                 self.sonar_state = 6 # error
-                print 'Bad level in waiting for trigger start'
+                logging.debug('Bad level in waiting for trigger start')
         elif self.sonar_state == 2: # waiting for trigger end
             if l == 0:
                 self.sonar_state = 3 # waiting for return pulse start
-                print 'Moving to waiting for return pulse start'
+                logging.debug('Moving to waiting for return pulse start')
             else:
                 self.sonar_state = 6 # error
-                print 'Bad level in waiting for trigger end'
+                logging.debug('Bad level in waiting for trigger end')
         elif self.sonar_state == 3: # waiting for return pulse start
             if l == 1:
                 self.sonar_pulse_start = t
                 self.sonar_state = 4 # waiting for return pulse end
-                print 'Moving to waiting for return pulse end'
+                logging.debug('Moving to waiting for return pulse end')
             else:
                 self.sonar_state = 6 # error
-                print 'Bad level in waiting for return pulse start'
+                logging.debug('Bad level in waiting for return pulse start')
         elif self.sonar_state == 4: # waiting for return pulse end
             if l == 0:
                 self.sonar_pulse_finish = t
                 self.sonar_state = 5 # cycle complete
-                print 'Moving to cycle complete'
+                logging.debug('Moving to cycle complete')
             else:
                 self.sonar_state = 6 # error
-                print 'Bad level in waiting for return pulse end'
+                logging.debug('Bad level in waiting for return pulse end')
         elif self.sonar_state == 5:
-            print 'Unexpected edge in cycle complete state - ignored'
+            logging.debug('Unexpected edge in cycle complete state - ignored')
         else:
-            print 'Unexpected edge in sonar error state - ignored'
+            logging.debug('Unexpected edge in sonar error state - ignored')
         
         self.dataLock.release()
         logging.debug('Released data lock')
-        print 'Handler complete'
+        logging.debug('Handler complete')
 
     def pingThreadHandler(self):
         global root
@@ -501,6 +502,7 @@ class App(object):
                     # Pan the servo
                     self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.panpos[index])
                     time.sleep(0.1)
+                    logging.debug('Acquire the data lock')
                     self.dataLock.acquire()
                     gotLock = True
                     self.sonar_state = 0 # waiting for trigger
@@ -511,7 +513,7 @@ class App(object):
                         self.dataLock.release()
                         gotLock = False
                         logging.debug('Released data lock')
-                        print 'Run script returns', self.gpio.run_script(self.sid)
+                        logging.debug('Run script returns %d', self.gpio.run_script(self.sid))
                         status = 0
                         while status != 1:
                             time.sleep(.0001) # Range of about 17 metres
@@ -522,31 +524,35 @@ class App(object):
                                 break
                         if self.pingTerminate:
                             break;
-                        print 'Tick from host', parameters[0] & 0xffffffffL
+                        logging.debug('Tick from host %d', parameters[0] & 0xffffffffL)
+                        logging.debug('Acquire the data lock')
                         self.dataLock.acquire()
                         gotLock = True
                         logging.debug('Got the data lock')
                         while self.sonar_state != 5 and self.sonar_state != 6:
-                            print 'Sonar state', self.sonar_state
+                            logging.debug('Sonar state %d', self.sonar_state)
                             self.dataLock.release()
                             gotLock = False
                             logging.debug('Released data lock')
                             time.sleep(.1)
+                            logging.debug('Sonar gpio level = %d', self.gpio.read(self.sonarGPIOChannel))
                             if self.pingTerminate:
                                 break;
+                            logging.debug('Acquire the data lock')
                             self.dataLock.acquire()
                             gotLock = True
                             logging.debug('Got the data lock')
                             if self.pingTerminate:
                                 break;
                             if self.sonar_state == 6:
-                                print 'Sonar Error'
+                                logging.debug('Sonar Error')
                                 self.dataLock.release()
                                 gotLock = False
                                 logging.debug('Released data lock')
                                 time.sleep(.5)
                                 if self.pingTerminate:
                                     break;
+                                logging.debug('Acquire the data lock')
                                 self.dataLock.acquire()
                                 gotLock = True
                                 logging.debug('Got the data lock')
@@ -565,7 +571,7 @@ class App(object):
                     # That was the distance there and back so halve the value
                     distance = int((float(self.sonar_pulse_finish - self.sonar_pulse_start) / 1000000.) * 34000) / 2
                     
-                    print 'distance', distance
+                    logging.debug('distance %d', distance)
                     logging.debug('Acquire the data lock')
                     self.dataLock.acquire()
                     gotLock = True
@@ -582,7 +588,7 @@ class App(object):
 
                 if self.pingTerminate:
                     break;
-                print 'Scan finished'    
+                logging.debug('Scan finished')   
                 self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
                 logging.debug('Acquire the data lock')
                 self.dataLock.acquire()
@@ -594,11 +600,12 @@ class App(object):
             if gotLock:
                 self.dataLock.release()
                 logging.debug('Released data lock')
+            logging.debug('Ping thread exiting')
 
 
     def wmDeleteWindowHandler(self):
         global root
-        print 'Stopping ping thread'
+        logging.debug('Stopping ping thread')
         self.pingTerminate = True
         self.pingEvent.set()
         root.destroy()
@@ -969,11 +976,11 @@ class App(object):
         self.lines, = self.auxiliary_axes.plot(self.theta, self.radius)
 
     def __del__(self):
-        print 'Shutting down'
+        logging.debug('Shutting down')
         if self.sid != -1:
             s = self.gpio.delete_script(self.sid)
             if s < 0:
-                print 'Failed to delete script', pigpio.error_text(s)
+                logging.debug('Failed to delete script %s', pigpio.error_text(s))
         self.gpio.stop()
         
     def autonomousDriving(self):
@@ -1010,4 +1017,4 @@ root.mainloop()
 
 del app
 
-print ' Finishing'
+print 'Exiting'
