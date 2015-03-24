@@ -6,7 +6,8 @@ import time
 import math
 import logging
 import sys
-import getopt
+#import getopt
+import argparse
 
 # Import matplotlib stuff
 import matplotlib
@@ -26,40 +27,19 @@ from Tkinter import *
 class App(object):
 
     def __init__(self, master):
-        # Process command line options
-        opts, args_proper = getopt.getopt(sys.argv[1:], '')
-        
-        self.hostname = 'localhost'
-        if args_proper.__len__() > 0:
-            self.hostname = args_proper[0]
-        
-        # Initialise logging
+         # Initialise logging
         logging.basicConfig(filename='barnaby.log', level=logging.DEBUG, filemode='w', \
                              format='%(thread)x %(funcName)s %(lineno)d %(levelname)s:%(message)s')
         
-        # Initialise pigpio
-        self.sid = -1
-        pigpio.exceptions = False
-        print 'pigpiod host', self.hostname
-        try:
-            self.gpio = pigpio.pi(self.hostname)
-            self.gpio_hardware_revision = self.gpio.get_hardware_revision()
-        except:
-            print 'Failed to intialise pigpio'
-            print 'Are you running on a pi?'
-            print 'If not then you can supply a hostname to connect to as a parameter'
-            exit(-1)
-        pigpio.exceptions = True
-        
-        # Some starting constants
+       # Some starting constants
         
         # It would be be to be able to auto detect the board type
         # But will need devicetree kernel for this
-        self.piroCon_v1_2 = 1
-        self.piroCon_v2_0 = 2
-        self.roboHat_v0_1 = 3
-        self.controllerBoardType = self.roboHat_v0_1
+        self.piroCon_v1 = 1
+        self.piroCon_v2 = 2
+        self.roboHat_v0 = 3
         
+        self.sid = -1
         self.thetaSamples = 50 # Number of theta samples
         self.servoIncrement = 100 # Default amount to move the servo 
         self.wheelDiameter = 5.4 # cm
@@ -74,9 +54,33 @@ class App(object):
         self.motorStateSpinningLeft = 4
         self.motorStateSpinningRight = 5
         
+        # Process command line options
+        parser = argparse.ArgumentParser(description='GUI for initio robot')
+        parser.add_argument('hostname', default='localhost', nargs='?',
+                   help='The hostname of the robot')
+        parser.add_argument('--board-type', default=1, type=int, choices=[1,2,3], dest='boardtype',
+                   help='Set the controller board type 1 = PiRoCon V1, 2 = PiRoCon V2, 3 = Robohat V0')
+
+        args = parser.parse_args()
+        self.hostname = args.hostname
+        self.controllerBoardType = args.boardtype
+            
+        # Initialise pigpio
+        pigpio.exceptions = False
+        print 'pigpiod host', self.hostname
+        try:
+            self.gpio = pigpio.pi(self.hostname)
+            self.gpio_hardware_revision = self.gpio.get_hardware_revision()
+        except:
+            print 'Failed to intialise pigpio'
+            print 'Are you running on a pi?'
+            print 'If not then you can supply a hostname to connect to as a parameter'
+            exit(-1)
+        pigpio.exceptions = True
+        
         # Set up the GPIO channel constants
-        if self.controllerBoardType == self.piroCon_v1_2:
-            logging.debug('Board type is PiroCon v1.2')
+        if self.controllerBoardType == self.piroCon_v1:
+            print 'Board type set to PiroCon v1'
             self.leftObstacleSensorGPIOChannel = 4
             self.rightMotorReverseGPIOChannel = 7
             self.rightMotorForwardGPIOChannel = 8
@@ -93,8 +97,8 @@ class App(object):
                 self.rightLineSensorGPIOChannel = 21
             else:
                 self.rightLineSensorGPIOChannel = 27
-        elif self.controllerBoardType == self.piroCon_v2_0:
-            logging.debug('Board type is PiroCon v2.0')
+        elif self.controllerBoardType == self.piroCon_v2:
+            print 'Board type set to PiroCon v2'
             # Settings are for a Pirocon v2 with IBoost64 daughter board
             # Note the reversal of GPIO channels 22 and 23 and the swapping
             # of the channels for the wheel sensors and obstacle sensors to allow access
@@ -115,8 +119,8 @@ class App(object):
                 self.rightLineSensorGPIOChannel = 21
             else:
                 self.rightLineSensorGPIOChannel = 27
-        elif self.controllerBoardType == self.roboHat_v0_1:
-            logging.debug('Board type is RoboHat v0.1')
+        elif self.controllerBoardType == self.roboHat_v0:
+            print 'Board type set to Robohat v0'
             # Settings for RoboHat prototype V0.1
             # Note the reversal of the motor channels and
             # the use of the alternative sonar channel
@@ -220,7 +224,7 @@ class App(object):
                 print 'Cannot read dma manager so cannot check DMA reservations'
                 print 'Probably not running on a pi'
                 exit(-1)
-                
+                        
         # pigiod script for sonar ping
         script = (b'm %d w '
             'w %d 1 '
@@ -981,7 +985,8 @@ class App(object):
             s = self.gpio.delete_script(self.sid)
             if s < 0:
                 logging.debug('Failed to delete script %s', pigpio.error_text(s))
-        self.gpio.stop()
+        if hasattr(self, 'gpio'):
+            self.gpio.stop()
         
     def autonomousDriving(self):
         # Autonomous driving using the obstacle sensors
