@@ -33,11 +33,10 @@ class App(object):
         
        # Some starting constants
         
-        # It would be be to be able to auto detect the board type
-        # But will need devicetree kernel for this
-        self.piroCon_v1 = 1
-        self.piroCon_v2 = 2
-        self.roboHat_v0 = 3
+        self.speed_of_sound_ms = 340.29 # speed of sound in m/s
+        
+        self.fastServoMoveThreshold = 10 # To avoid 5v rail dips do not move the servo too far in one go
+        self.servoDelay = 50 # Delay in mS between servo moves
         
         self.sid = -1
         self.thetaSamples = 50 # Number of theta samples
@@ -58,12 +57,9 @@ class App(object):
         parser = argparse.ArgumentParser(description='GUI for initio robot')
         parser.add_argument('hostname', default='localhost', nargs='?',
                    help='The hostname of the robot')
-        parser.add_argument('--board-type', default=1, type=int, choices=[1,2,3], dest='boardtype',
-                   help='Set the controller board type 1 = PiRoCon V1, 2 = PiRoCon V2, 3 = Robohat V0')
 
         args = parser.parse_args()
         self.hostname = args.hostname
-        self.controllerBoardType = args.boardtype
             
         # Initialise pigpio
         pigpio.exceptions = False
@@ -79,72 +75,23 @@ class App(object):
         pigpio.exceptions = True
         
         # Set up the GPIO channel constants
-        if self.controllerBoardType == self.piroCon_v1:
-            print 'Board type set to PiroCon v1'
-            self.leftObstacleSensorGPIOChannel = 4
-            self.rightMotorReverseGPIOChannel = 7
-            self.rightMotorForwardGPIOChannel = 8
-            self.leftMotorReverseGPIOChannel = 9
-            self.leftMotorForwardGPIOChannel = 10
-            self.sonarGPIOChannel = 14
-            self.rightObstacleSensorGPIOChannel = 17
-            self.leftLineSensorGPIOChannel = 18
-            self.leftWheelSensorGPIOChannel = 22
-            self.rightWheelSensorGPIOChannel = 23
-            self.tiltServoGPIOChannel = 24
-            self.panServoGPIOChannel = 25
-            if self.gpio_hardware_revision < 4:
-                self.rightLineSensorGPIOChannel = 21
-            else:
-                self.rightLineSensorGPIOChannel = 27
-        elif self.controllerBoardType == self.piroCon_v2:
-            print 'Board type set to PiroCon v2'
-            # Settings are for a Pirocon v2 with IBoost64 daughter board
-            # Note the reversal of GPIO channels 22 and 23 and the swapping
-            # of the channels for the wheel sensors and obstacle sensors to allow access
-            # to JP2 header pins #04 and #17 (wrongly labelled #07 on the board)
-            self.leftObstacleSensorGPIOChannel = 23
-            self.rightMotorReverseGPIOChannel = 7
-            self.rightMotorForwardGPIOChannel = 8
-            self.leftMotorReverseGPIOChannel = 9
-            self.leftMotorForwardGPIOChannel = 10
-            self.sonarGPIOChannel = 14
-            self.rightObstacleSensorGPIOChannel = 22
-            self.leftLineSensorGPIOChannel = 18
-            self.leftWheelSensorGPIOChannel = 4
-            self.rightWheelSensorGPIOChannel = 17
-            self.tiltServoGPIOChannel = 24
-            self.panServoGPIOChannel = 25
-            if self.gpio_hardware_revision < 4:
-                self.rightLineSensorGPIOChannel = 21
-            else:
-                self.rightLineSensorGPIOChannel = 27
-        elif self.controllerBoardType == self.roboHat_v0:
-            print 'Board type set to Robohat v0'
-            # Settings for RoboHat prototype V0.1
-            # Note the reversal of the motor channels and
-            # the use of the alternative sonar channel
-            self.leftWheelSensorGPIOChannel = 4
-            self.leftMotorForwardGPIOChannel = 7
-            self.leftMotorReverseGPIOChannel = 8
-            self.rightMotorForwardGPIOChannel = 9
-            self.rightMotorReverseGPIOChannel = 10
-            self.sonarGPIOChannel = 11
-            self.rightWheelSensorGPIOChannel = 17
-            self.leftLineSensorGPIOChannel = 18
-            self.leftObstacleSensorGPIOChannel = 22
-            self.rightObstacleSensorGPIOChannel = 23
-            self.tiltServoGPIOChannel = 24
-            self.panServoGPIOChannel = 25
-            if self.gpio_hardware_revision < 4:
-                self.rightLineSensorGPIOChannel = 21
-            else:
-                logging.debug("Type 2 board detected")
-                self.rightLineSensorGPIOChannel = 27
+        self.leftObstacleSensorGPIOChannel = 4
+        self.rightMotorForwardGPIOChannel = 7
+        self.rightMotorReverseGPIOChannel = 8
+        self.leftMotorForwardGPIOChannel = 9
+        self.leftMotorReverseGPIOChannel = 10
+        self.sonarGPIOChannel = 14
+        self.rightObstacleSensorGPIOChannel = 17
+        self.leftLineSensorGPIOChannel = 18
+        self.leftWheelSensorGPIOChannel = 22
+        self.rightWheelSensorGPIOChannel = 23
+        self.tiltServoGPIOChannel = 24
+        self.panServoGPIOChannel = 25
+        if self.gpio_hardware_revision < 4:
+            self.rightLineSensorGPIOChannel = 21
         else:
-            print 'Unknown board type', self.controllerBoardType 
-            exit(-1)
-            
+            self.rightLineSensorGPIOChannel = 27
+        
         """
         DMA channels (engines) used by this module
         ==========================================
@@ -504,8 +451,10 @@ class App(object):
                 index = int(0)
                 for theta in self.theta:
                     # Pan the servo
-                    self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.panpos[index])
-                    time.sleep(0.1)
+                    servoOffset = abs(self.panpos[index] - self.currentPan)
+                    self.slowServoMove(self.panServoGPIOChannel, self.panpos[index])
+                    logging.debug('Sleeping for %.03f', ((2 + servoOffset / self.fastServoMoveThreshold) * self.servoDelay) / 1000.)
+                    time.sleep(((2 + servoOffset / self.fastServoMoveThreshold) * self.servoDelay) / 1000.)
                     logging.debug('Acquire the data lock')
                     self.dataLock.acquire()
                     gotLock = True
@@ -520,7 +469,7 @@ class App(object):
                         logging.debug('Run script returns %d', self.gpio.run_script(self.sid))
                         status = 0
                         while status != 1:
-                            time.sleep(.0001) # Range of about 17 metres
+                            time.sleep(40. / self.speed_of_sound_ms) # Range of about 20 metres
                             if self.pingTerminate:
                                 break;
                             (status, parameters) = self.gpio.script_status(self.sid)
@@ -569,13 +518,11 @@ class App(object):
                     self.dataLock.release()
                     gotLock = False
                     logging.debug('Released data lock')
-
-                    # Distance pulse travelled in that time is time
-                    # multiplied by the speed of sound (cm/s)
-                    # That was the distance there and back so halve the value
-                    distance = int((float(self.sonar_pulse_finish - self.sonar_pulse_start) / 1000000.) * 34000) / 2
+                    # calculate range in centimetres
+                    distance = int(((float(self.sonar_pulse_finish - self.sonar_pulse_start) / 1000000.) * self.speed_of_sound_ms / 2.) * 100.)
                     
-                    logging.debug('distance %d', distance)
+                    #logging.debug('distance %d', distance)
+                    print 'index', index, 'distance', distance
                     logging.debug('Acquire the data lock')
                     self.dataLock.acquire()
                     gotLock = True
@@ -593,14 +540,14 @@ class App(object):
                 if self.pingTerminate:
                     break;
                 logging.debug('Scan finished')   
-                self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
+                self.slowServoMove(self.panServoGPIOChannel, 1500)
                 logging.debug('Acquire the data lock')
                 self.dataLock.acquire()
                 logging.debug('Got the data lock')
                 self.newSonarDataAvailable = True
                 self.dataLock.release()
                 logging.debug('Released data lock')
-                root.after_idle(self.idleCallback)
+                root.after_idle(self.sonarIdleCallback)
             if gotLock:
                 self.dataLock.release()
                 logging.debug('Released data lock')
@@ -618,7 +565,7 @@ class App(object):
         logging.debug('pingCallback')
         self.pingEvent.set()
         
-    def idleCallback(self):
+    def sonarIdleCallback(self):
         global root
         plotit = False
         logging.debug('Acquire the data lock')
@@ -637,6 +584,9 @@ class App(object):
             logging.debug('Plotting')
             self.lines.set_data(theta, radius)
             self.axes.adjust_axes_lim()
+            self.axes.relim()
+            self.axes.autoscale_view()
+            self.auxiliary_axes.autoscale_view()
             self.canvas.draw()
     
     def driveSpeedCallback(self, a, b, c):
@@ -784,36 +734,97 @@ class App(object):
         self.setPowerPercentage(0, self.leftMotorReverseGPIOChannel)
         self.setPowerPercentage(0, self.rightMotorForwardGPIOChannel)
         self.setPowerPercentage(percent, self.rightMotorReverseGPIOChannel)
+        
+    def slowServoMove(self, channel, targetPosition):
+        if channel ==  self.panServoGPIOChannel:
+            self.targetPanPosition = targetPosition
+            self.panCallback()
+        else:
+            self.targetTiltPosition = targetPosition
+            self.tiltCallback()
 
+    def tiltCallback(self):
+        if abs(self.targetTiltPosition - self.currentTilt) > self.fastServoMoveThreshold:
+            if self.targetTiltPosition > self.currentTilt:
+                newServoPosition = self.currentTilt + self.fastServoMoveThreshold
+            else:
+                newServoPosition = self.currentTilt - self.fastServoMoveThreshold
+            self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, newServoPosition)
+            self.currentTilt = newServoPosition
+            logging.debug('New tilt servo position %d', newServoPosition)
+            root.after(self.servoDelay, self.tiltCallback)
+        else:
+            self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.targetTiltPosition)
+            self.currentTilt = self.targetTiltPosition
+            logging.debug('Final tilt servo position %d', self.currentTilt)
+       
+    def panCallback(self):
+        if abs(self.targetPanPosition - self.currentPan) > self.fastServoMoveThreshold:
+            if self.targetPanPosition > self.currentPan:
+                newServoPosition = self.currentPan + self.fastServoMoveThreshold
+            else:
+                newServoPosition = self.currentPan - self.fastServoMoveThreshold
+            self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, newServoPosition)
+            self.currentPan = newServoPosition
+            logging.debug('New pan servo position %d', newServoPosition)
+            root.after(self.servoDelay, self.panCallback)
+        else:
+            self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.targetPanPosition)
+            self.currentPan = self.targetPanPosition
+            logging.debug('Final pan servo position %d', self.currentTilt)
+        
     def ptDownCallback(self, event):
-        self.currentTilt += self.servoIncrement
-        if self.currentTilt > 2500:
-            self.currentTilt = 2500
-        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt)
+        newServoPosition = self.currentTilt + self.servoIncrement
+        if newServoPosition > 2500:
+            newServoPosition = 2500
+        if abs(newServoPosition - self.currentTilt) > self.fastServoMoveThreshold:
+            self.slowServoMove(self.tiltServoGPIOChannel, newServoPosition)
+        else:
+            self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, newServoPosition)
+            self.currentTilt = newServoPosition
 
     def ptUpCallback(self, event):
-        self.currentTilt -= self.servoIncrement
-        if self.currentTilt < 500:
-            self.currentTilt = 500
-        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt)
+        newServoPosition = self.currentTilt - self.servoIncrement
+        if newServoPosition < 500:
+            newServoPosition = 500
+        if abs(newServoPosition - self.currentTilt) > self.fastServoMoveThreshold:
+            self.slowServoMove(self.tiltServoGPIOChannel, newServoPosition)
+        else:
+            self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, newServoPosition)
+            self.currentTilt = newServoPosition
 
     def ptLeftCallback(self, event):
-        self.currentPan += self.servoIncrement
-        if self.currentPan > 2500:
-            self.currentPan = 2500
-        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
+        newServoPosition = self.currentPan + self.servoIncrement
+        if newServoPosition > 2500:
+            newServoPosition = 2500
+        if abs(newServoPosition - self.currentPan) > self.fastServoMoveThreshold:
+            self.slowServoMove(self.panServoGPIOChannel, newServoPosition)
+        else:
+            self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, newServoPosition)
+            self.currentPan = newServoPosition
 
     def ptRightCallback(self, event):
-        self.currentPan -= self.servoIncrement
-        if self.currentPan < 500:
-            self.currentPan = 500
-        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
+        newServoPosition = self.currentPan - self.servoIncrement
+        if newServoPosition < 500:
+            newServoPosition = 500
+        if abs(newServoPosition - self.currentPan) > self.fastServoMoveThreshold:
+            self.slowServoMove(self.panServoGPIOChannel, newServoPosition)
+        else:
+            self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, newServoPosition)
+            self.currentPan = newServoPosition
 
     def ptCentreCallback(self, event):
-        self.currentPan = 1500
-        self.currentTilt = 1500
-        self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, self.currentPan)
-        self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, self.currentTilt)
+        newServoPosition = 1500
+        if abs(newServoPosition - self.currentPan) > self.fastServoMoveThreshold:
+            self.slowServoMove(self.panServoGPIOChannel, newServoPosition)
+        else:
+            self.gpio.set_servo_pulsewidth(self.panServoGPIOChannel, newServoPosition)
+            self.currentPan = newServoPosition
+        if abs(newServoPosition - self.currentTilt) > self.fastServoMoveThreshold:
+            self.slowServoMove(self.tiltServoGPIOChannel, newServoPosition)
+        else:
+            self.gpio.set_servo_pulsewidth(self.tiltServoGPIOChannel, newServoPosition)
+            self.currentTilt = newServoPosition
 
     def leftWheelSensorCallback(self, gpio_id, value, tick):
         logging.debug('Left wheel sensor state change %d', value)
@@ -987,6 +998,7 @@ class App(object):
                 logging.debug('Failed to delete script %s', pigpio.error_text(s))
         if hasattr(self, 'gpio'):
             self.gpio.stop()
+        logging.shutdown()
         
     def autonomousDriving(self):
         # Autonomous driving using the obstacle sensors
