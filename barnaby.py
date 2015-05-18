@@ -33,6 +33,7 @@ class App(object):
         
        # Some starting constants
         
+        self.PWM_FREQUENCY = 50 # This seems to be the highest that the L293DD will handle consistently with these motors
         self.speed_of_sound_ms = 340.29 # speed of sound in m/s
         
         self.fastServoMoveThreshold = 10 # To avoid 5v rail dips do not move the servo too far in one go
@@ -43,8 +44,8 @@ class App(object):
         self.servoIncrement = 100 # Default amount to move the servo 
         self.wheelDiameter = 5.4 # cm
         self.ticksPer360 = 300 # Number of wheel pulses to turn 360 degrees
-        defaultDriveSpeed = 100 # %
-        defaultRotationRate = 100 # %
+        defaultDriveSpeed = 50 # %
+        defaultRotationRate = 90 # %
         defaultDriveDistance = 10 # cm
         defaultRotationAmount = 90 # degrees
         self.motorStateStopped = 1
@@ -57,9 +58,11 @@ class App(object):
         parser = argparse.ArgumentParser(description='GUI for initio robot')
         parser.add_argument('hostname', default='localhost', nargs='?',
                    help='The hostname of the robot')
+        parser.add_argument('--test',  default='0', nargs='?', type=bool, help='Enter test mode')
 
         args = parser.parse_args()
         self.hostname = args.hostname
+        self.testmode = args.test
             
         # Initialise pigpio
         pigpio.exceptions = False
@@ -236,6 +239,7 @@ class App(object):
         label.grid(row=2, column=0)
         self.rotationRate = IntVar()
         self.rotationRate.set(defaultRotationRate)
+        
         self.rotationRate.trace('w', self.rotationRateCallback)
         spinbox = Spinbox(speedframe, from_=1, to=100, increment=1, textvariable=self.rotationRate)
         spinbox.grid(row=2, column=1)
@@ -320,6 +324,10 @@ class App(object):
         self.gpio.set_mode(self.leftMotorReverseGPIOChannel, pigpio.OUTPUT)
         self.gpio.set_mode(self.rightMotorForwardGPIOChannel, pigpio.OUTPUT)
         self.gpio.set_mode(self.rightMotorReverseGPIOChannel, pigpio.OUTPUT)
+        self.gpio.set_PWM_frequency(self.leftMotorForwardGPIOChannel, self.PWM_FREQUENCY)
+        self.gpio.set_PWM_frequency(self.leftMotorReverseGPIOChannel, self.PWM_FREQUENCY)
+        self.gpio.set_PWM_frequency(self.rightMotorForwardGPIOChannel, self.PWM_FREQUENCY)
+        self.gpio.set_PWM_frequency(self.rightMotorReverseGPIOChannel, self.PWM_FREQUENCY)
         self.gpio.set_PWM_range(self.leftMotorForwardGPIOChannel, 100)
         self.gpio.set_PWM_range(self.leftMotorReverseGPIOChannel, 100)
         self.gpio.set_PWM_range(self.rightMotorForwardGPIOChannel, 100)
